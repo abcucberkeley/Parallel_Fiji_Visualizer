@@ -1,0 +1,4 @@
+
+JDK 2019:
+gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PWTC.c parallelWriteTiff.c lzwEncode.c -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -shared -o libpWriteTiffC.so -ltiff
+

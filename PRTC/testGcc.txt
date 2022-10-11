@@ -1,0 +1,1 @@
+gcc -fopenmp -fPIC -DPIC PRTC.c parallelReadTiff.c mallocDynamic.c -I/usr/lib/jvm/java-11-openjdk-amd64/include/ -I/usr/lib/jvm/java-11-openjdk-amd64/include/linux -shared -o libpReadTiffC.so -ltiff

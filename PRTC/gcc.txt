@@ -1,0 +1,19 @@
+
+
+gcc -I/usr/lib/jvm/java-11-openjdk-amd64/include/ -I/usr/lib/jvm/java-11-openjdk-amd64/include/linux PRTC.c parallelReadTiff.c mallocDynamic.c -Wall -fPIC -c
+
+gcc -shared -o libpReadTiffC.so PRTC.o parallelReadTiff.o mallocDynamic.o -Wl,-rpath,/usr/local/lib -L/usr/local/lib -ltiff -fopenmp
+
+
+
+CURRENT:
+
+gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRTC.c parallelReadTiff.c mallocDynamic.c -I/usr/lib/jvm/java-11-openjdk-amd64/include/ -I/usr/lib/jvm/java-11-openjdk-amd64/include/linux -shared -o libpReadTiffC.so -ltiff
+
+TESTING:
+
+gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRTC.c parallelReadTiff.c mallocDynamic.c -I/usr/lib/jvm/java-11-openjdk-amd64/include/ -I/usr/lib/jvm/java-11-openjdk-amd64/include/linux -shared -static -o libpReadTiffC.so -ltiff
+
+JDK 2019:
+gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRTC.c parallelReadTiff.c -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -shared -o libpReadTiffC.so -ltiff
+
