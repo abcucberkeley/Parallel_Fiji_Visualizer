@@ -18,13 +18,13 @@ public class PRZC {
     
     // Declare native method
     
-    public native byte[][] parallelReadZarrUINT8(String fileName);
+    public native byte[][] parallelReadZarrUINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ);
     
-    public native short[][] parallelReadZarrUINT16(String fileName);
+    public native short[][] parallelReadZarrUINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ);
     
-    public native float[][] parallelReadZarrFLOAT(String fileName);
+    public native float[][] parallelReadZarrFLOAT(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ);
     
-    public native float[][] parallelReadZarrDOUBLE(String fileName);
+    public native float[][] parallelReadZarrDOUBLE(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ);
     
     public native long getDataType(String fileName);
     

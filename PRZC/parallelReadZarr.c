@@ -541,14 +541,8 @@ void parallelReadZarr(void* zarr, const char* folderName,uint64_t startX, uint64
 }
 
 // TODO: FIX MEMORY LEAKS
-void* readZarrParallelHelper(const char* folderName, uint8_t imageJIm)
+void* readZarrParallelHelper(const char* folderName, uint64_t startX, uint64_t startY, uint64_t startZ, uint64_t endX, uint64_t endY, uint64_t endZ, uint8_t imageJIm)
 {
-	uint64_t startX = 0;
-	uint64_t startY = 0;
-	uint64_t startZ = 0;
-	uint64_t endX = 0;
-	uint64_t endY = 0;
-	uint64_t endZ = 0;
 	char* cname = NULL;
 	
 	uint64_t shapeX = 0;
@@ -562,9 +556,10 @@ void* readZarrParallelHelper(const char* folderName, uint8_t imageJIm)
 	setValuesFromJSON(folderName,&chunkXSize,&chunkYSize,&chunkZSize,dtype,&order,&shapeX,&shapeY,&shapeZ,&cname);
 	//if(endX > shapeX || endY > shapeY || endZ > shapeZ) mexErrMsgIdAndTxt("zarr:inputError","Upper bound is invalid");
 	//if(nrhs == 1){
-	endX = shapeX;
-	endY = shapeY;
-	endZ = shapeZ;
+	// If the ends are 0 then default to setting them to the shape from the .zarray file
+	if(!endX) endX = shapeX;
+	if(!endY) endY = shapeY;
+	if(!endZ) endZ = shapeZ;
 	//}
 	uint64_t dim[3];
 	shapeX = endX-startX;
@@ -625,9 +620,9 @@ void* readZarrParallelHelper(const char* folderName, uint8_t imageJIm)
 }
 
 void* readZarrParallelWrapper(const char* fileName){
-	return readZarrParallelHelper(fileName,0);
+	return readZarrParallelHelper(fileName,0,0,0,0,0,0,0);
 }
 
 void* readZarrParallelWrapperImageJ(const char* fileName){
-	return readZarrParallelHelper(fileName,1);
+	return readZarrParallelHelper(fileName,0,0,0,0,0,0,1);
 }

@@ -37,25 +37,26 @@ public class PRZ {
 			stack = new ImageStack((int)dims[1],(int)dims[0]);
 			stack.setBitDepth(tBits);
 			if(bits == 8) {
-				byte im[][] = przc.parallelReadZarrUINT8(fileName);
+				byte im[][] = przc.parallelReadZarrUINT8(fileName,0,0,0,dims[0],dims[1],dims[2]);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 16) {
-				short im[][] = przc.parallelReadZarrUINT16(fileName);
+				
+				short im[][] = przc.parallelReadZarrUINT16(fileName,0,0,0,dims[0],dims[1],dims[2]);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 32) {
-				float im[][] = przc.parallelReadZarrFLOAT(fileName); 
+				float im[][] = przc.parallelReadZarrFLOAT(fileName,0,0,0,dims[0],dims[1],dims[2]); 
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if(bits == 64) {
-				float im[][] = przc.parallelReadZarrDOUBLE(fileName);
+				float im[][] = przc.parallelReadZarrDOUBLE(fileName,0,0,0,dims[0],dims[1],dims[2]);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}

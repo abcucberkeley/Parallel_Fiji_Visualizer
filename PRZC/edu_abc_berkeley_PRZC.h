@@ -10,34 +10,34 @@ extern "C" {
 /*
  * Class:     edu_abc_berkeley_PRZC
  * Method:    parallelReadZarrUINT8
- * Signature: (Ljava/lang/String;)[[B
+ * Signature: (Ljava/lang/String;JJJJJJ)[[B
  */
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8
-  (JNIEnv *, jobject, jstring);
+  (JNIEnv *, jobject, jstring, jlong, jlong, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     edu_abc_berkeley_PRZC
  * Method:    parallelReadZarrUINT16
- * Signature: (Ljava/lang/String;)[[S
+ * Signature: (Ljava/lang/String;JJJJJJ)[[S
  */
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16
-  (JNIEnv *, jobject, jstring);
+  (JNIEnv *, jobject, jstring, jlong, jlong, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     edu_abc_berkeley_PRZC
  * Method:    parallelReadZarrFLOAT
- * Signature: (Ljava/lang/String;)[[F
+ * Signature: (Ljava/lang/String;JJJJJJ)[[F
  */
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT
-  (JNIEnv *, jobject, jstring);
+  (JNIEnv *, jobject, jstring, jlong, jlong, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     edu_abc_berkeley_PRZC
  * Method:    parallelReadZarrDOUBLE
- * Signature: (Ljava/lang/String;)[[F
+ * Signature: (Ljava/lang/String;JJJJJJ)[[F
  */
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE
-  (JNIEnv *, jobject, jstring);
+  (JNIEnv *, jobject, jstring, jlong, jlong, jlong, jlong, jlong, jlong);
 
 /*
  * Class:     edu_abc_berkeley_PRZC

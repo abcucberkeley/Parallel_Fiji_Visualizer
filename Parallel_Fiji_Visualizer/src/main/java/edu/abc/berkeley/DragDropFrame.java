@@ -16,7 +16,7 @@ public class DragDropFrame extends JFrame{
 	 public DragDropFrame() {
 
 	        // Set the frame title
-	        super("Parallel Tiff Reader");
+	        super("Parallel Fiji Visualizer");
 
 	        // Set the size
 	        this.setSize(400, 250);

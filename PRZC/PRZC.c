@@ -9,10 +9,10 @@
 #include "edu_abc_berkeley_PRZC.h"
 
 
-JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 (JNIEnv *env, jobject thisObj, jstring fileName){
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
 	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-	uint8_t* arrP = (uint8_t*)readZarrParallelWrapperImageJ(fName);
-	uint64_t* arrDims = getImageSize(fName);
+	uint8_t* arrP = (uint8_t*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
+	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
 	(*env)->ReleaseStringUTFChars(env,fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
@@ -48,15 +48,14 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 
 
 	}
 	free(arrP);
-	free(arrDims);
 	return outer;
 
 }
 
-JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16 (JNIEnv *env, jobject thisObj, jstring fileName){
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16 (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
 	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-	uint16_t* arrP = (uint16_t*)readZarrParallelWrapperImageJ(fName);
-	uint64_t* arrDims = getImageSize(fName);
+	uint16_t* arrP = (uint16_t*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
+	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
 	(*env)->ReleaseStringUTFChars(env,fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
@@ -91,16 +90,15 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16
 
 	}
 	free(arrP);
-	free(arrDims);
 	return outer;
 
 }
 
 
-JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT (JNIEnv *env, jobject thisObj, jstring fileName){
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
 	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-	float* arrP = (float*)readZarrParallelWrapperImageJ(fName);
-	uint64_t* arrDims = getImageSize(fName);
+	float* arrP = (float*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
+	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
 	(*env)->ReleaseStringUTFChars(env,fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
@@ -136,16 +134,15 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT 
 
 	}
 	free(arrP);
-	free(arrDims);
 	return outer;
 
 }
 
 // Image stack does not accept double so we convert to a float for now
-JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE (JNIEnv *env, jobject thisObj, jstring fileName){
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
 	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-	double* arrPT = (double*)readZarrParallelWrapperImageJ(fName);
-	uint64_t* arrDims = getImageSize(fName);
+	double* arrPT = (double*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
+	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
 	(*env)->ReleaseStringUTFChars(env,fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
@@ -190,7 +187,6 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE
 
 	}
 	free(arrP);
-	free(arrDims);
 	return outer;
 
 }
