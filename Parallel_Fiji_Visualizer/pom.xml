@@ -21,12 +21,12 @@
     <parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>31.1.0</version>
+		<version>31.1.0</version>  <!-- Testing - Old: 31.1.0 -->
 		<relativePath/>
 	</parent>
 
 	<groupId>edu.abc.berkeley</groupId>        <!-- FIXME: Your organization groupId here -->
-	<artifactId>ParallelFijiVisualizer</artifactId> <!-- FIXME: Your project artifactId here   -->
+	<artifactId>Parallel_Fiji_Visualizer</artifactId> <!-- FIXME: Your project artifactId here   -->
 	<version>1.0.0</version>
 
 	<name>Parallel Read Tiff</name>                                               <!-- FIXME: Your project name here          -->
