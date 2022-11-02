@@ -2,11 +2,18 @@ package edu.abc.berkeley;
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 
+import ij.IJ;
+import ij.ImagePlus;
+import ij.ImageStack;
+
 import java.awt.*;
 import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
 
+import java.io.File;
+
 /*
+    FILE: PWZ
     JFrame will help in opening the frame/window for interface
     JPanel will have the panel, for widgets to adjust and adapt based on window size.
 
@@ -39,6 +46,14 @@ import java.awt.event.ActionEvent;
   - Use given API JFileChooser
   */
 
+  /*
+   * NOTES (10/27/2022)
+   1.) Implement Coords.java class (handling starting and ending XYZ, for better readability)
+   * 
+   * 
+   * 
+   */
+
 public class PWZGUI implements ActionListener{
     JFrame window;
     JPanel panel;
@@ -57,16 +72,43 @@ public class PWZGUI implements ActionListener{
     JPanel tablePanel;
     JTable table;
     JScrollPane scrollPane;
-    int startX=0, startY=0, startZ=0;
-    int endX=0, endY=0, endZ=0;
+    
+    // Data retrievers.
+    long startX=0, startY=0, startZ=0;
+    long endX=0, endY=0, endZ=0;
+    String filepath;
+    String compressor;
 
     // Default values for the chunk sizes.
     // Also, not reusing other starting and ending, so doesnt alter those variables.
-    int defaultX=256, defaultY=256, defaultZ=256;
+    long defaultX=256, defaultY=256, defaultZ=256;
+
+
+
+    // Grab Coordinates (UPDATED FUNC VERS)
+    Container pane;
+    
+    
 
     public PWZGUI() {
         // Creates a thread. Lets be called and execute object in its own instance.
         // Basically like its own thread.
+        this.filepath = "";
+        this.compressor = "";
+
+        // Starting coords
+        this.startX = 0;
+        this.startY = 0;
+        this.startZ = 0;
+        
+        // Ending coords
+        this.endX = 0;
+        this.endY = 0;
+        this.endZ = 0;
+        defaultX = 256;
+        defaultY = 256;
+        defaultZ = 256;
+
         Runnable r = new Runnable() {
             @Override
             public void run(){
@@ -79,7 +121,65 @@ public class PWZGUI implements ActionListener{
         SwingUtilities.invokeLater(r);
     }
 
+    /*public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
+        this.filepath = filepath;
+        this.compressor = compressor;
+
+        // Starting coords
+        this.startX = starting.x;
+        this.startY = starting.y;
+        this.startZ = starting.z;
+        
+        // Ending coords
+        this.endX = ending.x;
+        this.endY = ending.y;
+        this.endZ = ending.z;
+        defaultX = 256;
+        defaultY = 256;
+        defaultZ = 256;
+
+        Runnable r = new Runnable(){
+            @Override
+            public void run(){
+                init();
+            }
+        };
+
+        SwingUtilities.invokeLater(r);
+    }*/
+
+    // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
+    public PWZGUI(String filepath, long start_x, long start_y, long start_z, long end_x, long end_y, long end_z, long chunkSize, String compressor){
+        this.filepath = filepath;
+        this.compressor = compressor;
+
+        // Starting coords
+        this.startX = start_x;
+        this.startY = start_y;
+        this.startZ = start_z;
+        
+        // Ending coords
+        this.endX = end_x;
+        this.endY = end_y;
+        this.endZ = end_z;
+        defaultX = 256;
+        defaultY = 256;
+        defaultZ = 256;
+
+        pane = new Container();
+
+        Runnable r = new Runnable(){
+            @Override
+            public void run(){
+                init();
+            }
+        };
+
+        SwingUtilities.invokeLater(r);
+    }
+
     private void init(){
+
         window = new JFrame("Zarr FIle");
         panel = new JPanel(); // Main Panel
         tablePanel = new JPanel(); // JTable Panel
@@ -169,7 +269,7 @@ public class PWZGUI implements ActionListener{
         // Setting window/jframe properties
         window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
-        window.getContentPane().add(tablePanel, BorderLayout.SOUTH);
+        window.getContentPane().add(tablePanel, BorderLayout.SOUTH); // This is where we add the JTable to the interface.
         window.add(panel, BorderLayout.CENTER);
         window.pack();
         window.setLocation(new Point(900, 250)); // Hopefully puts the screen in the center of the monitor (vary depending on monitoring)
@@ -193,13 +293,40 @@ public class PWZGUI implements ActionListener{
     }
 
     // Loading filepath given.
-    private void loadfile(String filepath){ System.out.println("[DEBUGGING]: " + filepath + " has been typed!"); }
+    private void loadfile(String filepath){
+        // File Handling stuff. (Referenced PWZ.java)
+        // PWZC pwzc = new PWZC();
+        JFileChooser chooser = new JFileChooser();
+        chooser.setApproveButtonText("Save");
+		chooser.setDialogTitle("Save as Zarr");
+        File file = null;
+
+        int returnValue = chooser.showOpenDialog(null);
+
+        if(returnValue == JFileChooser.APPROVE_OPTION) file = chooser.getSelectedFile();
+        if(file == null) return;
+
+        ImagePlus cImagePlus = IJ.getImage();
+
+        if(cImagePlus == null) return;
+
+        ImageStack cImageStack = cImagePlus.getImageStack();
+        Object[] cImageObj = cImageStack.getImageArray();
+
+        // May need to get bits another way
+		int bits = cImageStack.getBitDepth();
+		String fileName = file.getPath();
+		int x = cImageStack.getWidth();
+		int y = cImageStack.getHeight();
+		int z = cImageStack.getSize();
+		// pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
+
+        System.out.println("[DEBUGGING]: " + filepath + " has been typed!");
+    }
 
     // Does smthing when this check box is clicked.
     private void checkboxClicked(){ System.out.println("[DEBUGGING]: Check Box Clicked!"); }
 
     // Testing and debugging interface with main method.
-    public static void main(String[] args) {
-        new PWZGUI();
-    }
+    // public static void main(String[] args) { new PWZGUI(); }
 }
