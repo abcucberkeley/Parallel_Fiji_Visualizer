@@ -13,12 +13,6 @@ import java.awt.event.ActionEvent;
 import java.io.File;
 
 /*
- * LinkedIn Learning to also login with one sjsu. To learn from Adobe XD name on the bottom
- * Adobe XD Essential Training prototype
- * Login with One SJSU
- */
-
-/*
  * PREVIOUS MEETING DISCUSSION
  * - Implement constructor that takes in this many arguments. (As shown below)
  * ** PWZGUI(string, long, long, long, long, long, long, long, long, long, string) // filepath: string, Starting XYZ: long, ending XYZ: long, chunkSize: long, compressor: string
@@ -120,6 +114,7 @@ public class PWZGUI implements ActionListener{
         SwingUtilities.invokeLater(r);
     }
 
+    // This is just for testing and experiementing.
     /*public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
         this.filepath = filepath;
         this.compressor = compressor;
