@@ -1,5 +1,7 @@
 package edu.abc.berkeley;
 import javax.swing.*;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
 import javax.swing.table.DefaultTableModel;
 
 import ij.IJ;
@@ -13,50 +15,52 @@ import java.awt.event.ActionEvent;
 import java.io.File;
 
 /*
-    FILE: PWZ
-    JFrame will help in opening the frame/window for interface
-    JPanel will have the panel, for widgets to adjust and adapt based on window size.
+ * PREVIOUS MEETING DISCUSSION
+ * - Implement constructor that takes in this many arguments. (As shown below)
+ * ** PWZGUI(string, long, long, long, long, long, long, long, long, long, string) // filepath: string, Starting XYZ: long, ending XYZ: long, chunkSize: long, compressor: string
+ * CHANGES NEEDED TO BE MADE TO THE INTERFACE
+ * 1.) Crop Button. By brinding down the crop box, and positioning the widgets similarily to what is being shown in the XML diagrams that we discussed and promptly designed in diagrams.io
+ * --> Purpose: Cropping the file size of the zarr file we are trying to load by clicking the browse widget.
+ * 2.) Bring Down and adjust crop widget. Crop widget adjust to the XML formatting. (near/in front of starting and ending XYZ)
+ * 3.) Make Starting and ending XYZ, with chunk and default compressor seperate from each other
 
-    JPanel will add:
-    JLabels
-    Buttons
-    Checkboxes
-*/
-
-/*
- * 
- * Project Meeting Notes
- * MAKE CHANGES TO INTERFACE
- * Crop Button
- * Purpose: Cropping the file size of the zarr file we are trying to load by clicking the browse widget.
- * - Bring Down and adjust crop widget. Crop widget adjust to the XML formatting. (near/in front of starting and ending XYZ)
- * - Make Starting and ending XYZ, with chunk and default compressor seperate from each other
+ * SIDE NOTE: (Describing by thought process.)
  * 1. table for starting & ending XYZ
  * 2. another for chunk and compressor.
  * NOTE: Dont actually write default, just put compressor.
  */
 
+/*
+ * NOTES
+ * 1.) Fix interface to look similarily to the wxWidget diagram from diagram.io (DONE)
+ * 2.) [IMPORTANT] Integrate the JFileChooser to being used by this interface. (DONE)
+ * 3.) Seperate Chunk Size and Compressor into their own rows and cols fields. (DONE)
+ * SOMETHING TO NOTE: Dont actually write default, just put compressor.
+ * 4.) Re-adjusting the crop file size widget to a similar position referenced to the diagrams.io design. (DONE)
+ * 5.) Once implemented. Refactor and clean up code. Debugging and troubleshooting, so there is no unecessary code not being used. (DONE)
+ * 
+ * IN-MEETING DISCUSSION
+ * - Proposing there be a coordinates class. So, instead of passing in 6 variables, we can pass two objects.  Also for better readability to the programmer.
+ * - Easier to handly the X,Y, and Z coordinates.
+ * - Or we can keep both implementation, in case we may need to edit the specific values directly, possibly.
+ */
+
  /*
-  ** Variables that are important reference to this one here!
-  Implement (IMPORTANCE)
-  PWZGUI(string, long, long, long, long, long, long, long, long, long, string) // filepath: string, Starting XYZ: long, ending XYZ: long, chunkSize: long, compressor: string
+  * WRAP UP NOTES FOR THIS PROJECT
+  * - Constructor chnage variable names (like start_x to startX)
+  * - Change default_x to chunkX
+  * - Submit button to make changes.
+  * - Compressor default is lz4 not iz4.
+*/
 
-  Widget implementation
-  Click Browse
-  - Use given API JFileChooser
-  */
-
-  /*
-   * NOTES (10/27/2022)
-   1.) Implement Coords.java class (handling starting and ending XYZ, for better readability)
-   * 
-   * 
-   * 
-   */
+/*
+    C++ MAIN PROJECT.
+ * 1.) Release and get matlab working with C++ Qt (version, 6.2.4)
+ */
 
 public class PWZGUI implements ActionListener{
     JFrame window;
-    JPanel panel;
+    JPanel textAreaPanel;
 
     JButton browse;
 
@@ -68,47 +72,53 @@ public class PWZGUI implements ActionListener{
     JLabel textAreaLabel;
     JTextArea textArea;
 
-    // Starting and XYZ
-    JPanel tablePanel;
+    // Starting and ending XYZ
     JTable table;
     JScrollPane scrollPane;
     
     // Data retrievers.
-    long startX=0, startY=0, startZ=0;
-    long endX=0, endY=0, endZ=0;
-    String filepath;
-    String compressor;
+    JLabel startCoordsLabel;
+    JLabel endCoordsLabel;
+
+    public String filepath;
+    public String compressor;
+    public long startX=0, startY=0, startZ=0;
+    public long endX=0, endY=0, endZ=0;
 
     // Default values for the chunk sizes.
     // Also, not reusing other starting and ending, so doesnt alter those variables.
-    long defaultX=256, defaultY=256, defaultZ=256;
+    public long chunkSizeX=256, chunkSizeY=256, chunkSizeZ=256;
 
-
-
-    // Grab Coordinates (UPDATED FUNC VERS)
-    Container pane;
+    JTable chunkTable; // Displaying the chunk sizes that are the default XYZ coords. (Though not expected to be changed.)
+    JScrollPane chunkScrollPane; // Scroll pane, to help display the default values of the chunk size.
     
-    
+    // Default Compressor
+    JLabel compressorLabel;
+
+    JButton saveChangesButton; // To save changes when 
 
     public PWZGUI() {
-        // Creates a thread. Lets be called and execute object in its own instance.
-        // Basically like its own thread.
-        this.filepath = "";
-        this.compressor = "";
+        filepath = "";
+        compressor = "lz4"; // Compressor is lz4. (NOTE, this value does not change by default whatsoever)
 
         // Starting coords
-        this.startX = 0;
-        this.startY = 0;
-        this.startZ = 0;
+        // Starting and ending coordinates are the expected values to be changed by user using the intercface.
+        startX = 0;
+        startY = 0;
+        startZ = 0;
         
         // Ending coords
-        this.endX = 0;
-        this.endY = 0;
-        this.endZ = 0;
-        defaultX = 256;
-        defaultY = 256;
-        defaultZ = 256;
+        endX = 0;
+        endY = 0;
+        endZ = 0;
 
+        // These default values are for the chunk sizes. That should remain as the default.
+        chunkSizeX = 256;
+        chunkSizeY = 256;
+        chunkSizeZ = 256;
+
+        // Creates a thread. Lets be called and execute object in its own instance.
+        // Basically like its own thread.
         Runnable r = new Runnable() {
             @Override
             public void run(){
@@ -120,54 +130,28 @@ public class PWZGUI implements ActionListener{
         // http://docs.oracle.com/javase/tutorial/uiswing/concurrency
         SwingUtilities.invokeLater(r);
     }
-
-    /*public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
-        this.filepath = filepath;
-        this.compressor = compressor;
-
-        // Starting coords
-        this.startX = starting.x;
-        this.startY = starting.y;
-        this.startZ = starting.z;
-        
-        // Ending coords
-        this.endX = ending.x;
-        this.endY = ending.y;
-        this.endZ = ending.z;
-        defaultX = 256;
-        defaultY = 256;
-        defaultZ = 256;
-
-        Runnable r = new Runnable(){
-            @Override
-            public void run(){
-                init();
-            }
-        };
-
-        SwingUtilities.invokeLater(r);
-    }*/
-
+    
+    // This commented constructor was just an idea (will deleted, if this implementation may not be needed.)
     // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
-    public PWZGUI(String filepath, long start_x, long start_y, long start_z, long end_x, long end_y, long end_z, long chunkSize, String compressor){
+    public PWZGUI(String filepath, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor){
         this.filepath = filepath;
         this.compressor = compressor;
 
         // Starting coords
-        this.startX = start_x;
-        this.startY = start_y;
-        this.startZ = start_z;
+        this.startX = startX;
+        this.startY = startY;
+        this.startZ = startZ;
         
         // Ending coords
-        this.endX = end_x;
-        this.endY = end_y;
-        this.endZ = end_z;
-        defaultX = 256;
-        defaultY = 256;
-        defaultZ = 256;
+        this.endX = endX;
+        this.endY = endY;
+        this.endZ = endZ;
+        this.chunkSizeX = chunkSizeX;
+        this.chunkSizeY = chunkSizeY;
+        this.chunkSizeZ = chunkSizeZ;
 
-        pane = new Container();
-
+        // Creates a thread. Lets be called and execute object in its own instance.
+        // Basically like its own thread.
         Runnable r = new Runnable(){
             @Override
             public void run(){
@@ -180,14 +164,17 @@ public class PWZGUI implements ActionListener{
 
     private void init(){
 
-        window = new JFrame("Zarr FIle");
-        panel = new JPanel(); // Main Panel
-        tablePanel = new JPanel(); // JTable Panel
+        window = new JFrame("Write Zarr");
+        textAreaPanel = new JPanel(); // Main Panel
+        compressorLabel = new JLabel();
+
 
 
         setupTextProperties(); // Handling button widget
         setupCropProperties(); // User type text label, and text box field.
         grabCoordinates();
+        chunkAndCompressorProperties();
+        saveChangesButton(); // update the table changes.
         show(); // Handling adding all the widgets into the panel, while panel is being referred by the JFrame.
 
         // Setting window/jframe properties
@@ -203,27 +190,33 @@ public class PWZGUI implements ActionListener{
 
         // Handling text box and label
         textAreaLabel = new JLabel("Filepath");
-        textAreaLabel.setBounds(135, 5, 75, 15);
+        textAreaLabel.setBounds(125, 5, 75, 15);
 
         textArea = new JTextArea(1, 6);
         textArea.setBounds(215, 5, 75, 25);
         textArea.setLayout(new FlowLayout());
+
     }
 
     // Setup cropping properties and JLabels corresponding to given check box widget.
     private void setupCropProperties(){
         // User type text label, and text box field.
         checkBox = new JCheckBox("Crop");
-        checkBox.setBounds(215, 50, 75, 15);
+        checkBox.setBounds(160, 110, 75, 15); // Higher x is more to the right we go, lower value y is the more we go upwards.
         checkBox.addActionListener(this);
     }
-
+    
     private void grabCoordinates(){
+        // Labels allowing the user using the interface to know
+        startCoordsLabel = new JLabel("Start");
+        endCoordsLabel = new JLabel("End");
+
+        startCoordsLabel.setBounds(115, 90, 150, 150);
+        endCoordsLabel.setBounds(115, 110, 150, 150);
+        
         Object[][] data = {
-            {"Start", startX, startY, startZ},
-            {"End", endX, endY, endZ},
-            {"Chunk", defaultX, defaultY, defaultZ},
-            {"Default", "Iz4"}
+            {startX, startY, startZ},
+            {endX, endY, endZ},
         };
 
         DefaultTableModel tableModel = new DefaultTableModel(){
@@ -238,7 +231,6 @@ public class PWZGUI implements ActionListener{
         table.setBounds(30, 30, 950, 950);
 
         // Adding columns to the table
-        tableModel.addColumn("");
         tableModel.addColumn("X");
         tableModel.addColumn("Y");
         tableModel.addColumn("Z");
@@ -247,33 +239,76 @@ public class PWZGUI implements ActionListener{
         for(int i = 0; i < data.length; i++) tableModel.addRow(data[i]);
 
         scrollPane = new JScrollPane(table);
-        // Original width = 210, height = 75
         scrollPane.setPreferredSize(new Dimension(250, 100)); // Actually setting how large the scroll pane is.
-        scrollPane.setLocation(650, 130);
+        scrollPane.setBounds(172, 145, 250, 53); // Set where we want the JTable to be located in the JFrame. (Actually adjusts X and Y coords, and width and height)
         scrollPane.setVisible(true);
+    }
+
+    private void chunkAndCompressorProperties(){
+        // Setting up JTable specifically for Chunk Size.
+        Object[] data = {chunkSizeX, chunkSizeY, chunkSizeZ};
+        DefaultTableModel model = new DefaultTableModel();
+
+        chunkTable = new JTable(model);
+        chunkTable.setBounds(30, 30, 850, 950);
+
+        // Adding rows to the table.
+        model.addColumn("Chunk X");
+        model.addColumn("Chunk Y");
+        model.addColumn("Chunk Z");
+        model.addRow(data);
+
+        chunkScrollPane = new JScrollPane(chunkTable);
+        // Original width = 210, height = 75
+        chunkScrollPane.setPreferredSize(new Dimension(200, 100)); // Actually setting how large the scroll pane is.
+        chunkScrollPane.setBounds(170, 205, 255, 40); // Set where we want the JTable to be located in the JFrame. (This line is what updates the X, Y coordinates of widget)
+        chunkScrollPane.setVisible(true);
+
+        compressorLabel.setText("Compressor: " + compressor);
+        compressorLabel.setBounds(180, 245, 130, 20); // NOTE: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
+    }
+
+    // Function to help organize the widget that handles the saving changes button.
+    private void saveChangesButton() {
+        saveChangesButton = new JButton("Save Changes");
+        // saveChangesButton.setBounds(230, 55, 115, 25);
+        saveChangesButton.setBounds(235, 55, 115, 25);
+
+        saveChangesButton.addActionListener(this);
     }
 
     // show function, has keeps track of all the added components into JFrame -> going to -> JPanel -> widgets/checkboxes/etc.
     private void show(){
+        // NOTE: Add to panel
         // Adding/packing all widgets into the panel, then referring that panel to the window.
-        panel.add(textAreaLabel);
-        panel.add(textArea);
-        panel.add(browse);
-        panel.add(checkBox);
-        panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        
+        // This portion adds in the user input interface interaction widgets into there own panel.
+        textAreaPanel.add(textAreaLabel);
+        textAreaPanel.add(textArea);
+        textAreaPanel.add(browse);
 
-        tablePanel.add(scrollPane);
+        textAreaPanel.setSize(50, 50);
+
+        // Adds the other widgets into the JFrame window themselves.
+        window.add(checkBox); // UPDATE: Add this into the window frame. So we can move this widget however we see fit.
+        window.add(startCoordsLabel);
+        window.add(endCoordsLabel);
+        window.add(scrollPane);
+        window.add(chunkScrollPane);
+        window.add(compressorLabel);
+
+        
+        window.add(saveChangesButton);
+
+        
         
 
         // Setting window/jframe properties
         window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
-        window.getContentPane().add(tablePanel, BorderLayout.SOUTH); // This is where we add the JTable to the interface.
-        window.add(panel, BorderLayout.CENTER);
+        window.add(textAreaPanel, BorderLayout.CENTER); // This is how the TextArea and Labels, are being centered to the TOP of the interface.
         window.pack();
         window.setLocation(new Point(900, 250)); // Hopefully puts the screen in the center of the monitor (vary depending on monitoring)
         window.setVisible(true);
+        // window.setResizable(false);
     }
 
     // Handling events happening with the interface.
@@ -290,6 +325,9 @@ public class PWZGUI implements ActionListener{
             if(checkBox.isSelected()) checkboxClicked();
             if(!emptyString) loadfile(filepath);
         }
+
+        // Updates and clears the table.
+        if(e.getSource() == saveChangesButton) updateTable();
     }
 
     // Loading filepath given.
@@ -313,20 +351,46 @@ public class PWZGUI implements ActionListener{
         ImageStack cImageStack = cImagePlus.getImageStack();
         Object[] cImageObj = cImageStack.getImageArray();
 
-        // May need to get bits another way
-		int bits = cImageStack.getBitDepth();
+        
+		int bits = cImageStack.getBitDepth(); // May need to get bits another way
 		String fileName = file.getPath();
 		int x = cImageStack.getWidth();
 		int y = cImageStack.getHeight();
 		int z = cImageStack.getSize();
-		// pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
 
-        System.out.println("[DEBUGGING]: " + filepath + " has been typed!");
+		// pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
     }
 
-    // Does smthing when this check box is clicked.
-    private void checkboxClicked(){ System.out.println("[DEBUGGING]: Check Box Clicked!"); }
+    
+    private void checkboxClicked(){ System.out.println("[DEBUGGING]: Check Box Clicked!"); } // Does smthing when this check box is clicked.
 
-    // Testing and debugging interface with main method.
-    // public static void main(String[] args) { new PWZGUI(); }
+    // When "Save Changes" button is clicked, the given inputted information is updated
+    // Little redundant, for now was trying to get interface working with updating the JTable.
+    private void updateTable(){
+        startX = 123;
+        startY = 456;
+        startZ = 890;
+
+        endX = 1024;
+        endY = 1036;
+        endZ = 1048;
+
+        chunkSizeX = 256;
+        chunkSizeY = 256;
+        chunkSizeZ = 256;
+
+        table.getModel().setValueAt(startX, 0, 0);
+        table.getModel().setValueAt(startY, 0, 1);
+        table.getModel().setValueAt(startZ, 0, 2);
+        table.getModel().setValueAt(endX, 1, 0);
+        table.getModel().setValueAt(endY, 1, 1);
+        table.getModel().setValueAt(endZ, 1, 2);
+
+        chunkTable.getModel().setValueAt(chunkSizeX, 0, 0);
+        chunkTable.getModel().setValueAt(chunkSizeY, 0, 1);
+        chunkTable.getModel().setValueAt(chunkSizeZ, 0, 2);
+    }
+
+    // For testing and debugging the interface with a main method.
+   //  public static void main(String[] args) { new PWZGUI(); }
 }
