@@ -95,7 +95,6 @@ public class PWZGUI implements ActionListener{
     // Default Compressor
     JLabel compressorLabel;
 
-    JButton resetTable; // For debugging purposes.
     JButton saveChangesButton; // To save changes when 
 
     public PWZGUI() {
@@ -131,6 +130,7 @@ public class PWZGUI implements ActionListener{
         // http://docs.oracle.com/javase/tutorial/uiswing/concurrency
         SwingUtilities.invokeLater(r);
     }
+    
     // This commented constructor was just an idea (will deleted, if this implementation may not be needed.)
     // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
     public PWZGUI(String filepath, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor){
@@ -174,7 +174,6 @@ public class PWZGUI implements ActionListener{
         setupCropProperties(); // User type text label, and text box field.
         grabCoordinates();
         chunkAndCompressorProperties();
-        resetTable(); // resets all values to default value
         saveChangesButton(); // update the table changes.
         show(); // Handling adding all the widgets into the panel, while panel is being referred by the JFrame.
 
@@ -268,18 +267,12 @@ public class PWZGUI implements ActionListener{
         compressorLabel.setText("Compressor: " + compressor);
         compressorLabel.setBounds(180, 245, 130, 20); // NOTE: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
     }
-    
-    private void resetTable(){
-        resetTable = new JButton("Clear");
-        resetTable.setBounds(285, 55, 130, 25);
-        resetTable.addActionListener(this);
-    }
 
     // Function to help organize the widget that handles the saving changes button.
     private void saveChangesButton() {
         saveChangesButton = new JButton("Save Changes");
         // saveChangesButton.setBounds(230, 55, 115, 25);
-        saveChangesButton.setBounds(155, 55, 115, 25);
+        saveChangesButton.setBounds(235, 55, 115, 25);
 
         saveChangesButton.addActionListener(this);
     }
@@ -305,7 +298,6 @@ public class PWZGUI implements ActionListener{
 
         
         window.add(saveChangesButton);
-        window.add(resetTable);
 
         
         
@@ -336,7 +328,6 @@ public class PWZGUI implements ActionListener{
 
         // Updates and clears the table.
         if(e.getSource() == saveChangesButton) updateTable();
-        if(e.getSource() == resetTable) clearTable();
     }
 
     // Loading filepath given.
@@ -387,32 +378,6 @@ public class PWZGUI implements ActionListener{
         chunkSizeX = 256;
         chunkSizeY = 256;
         chunkSizeZ = 256;
-
-        table.getModel().setValueAt(startX, 0, 0);
-        table.getModel().setValueAt(startY, 0, 1);
-        table.getModel().setValueAt(startZ, 0, 2);
-        table.getModel().setValueAt(endX, 1, 0);
-        table.getModel().setValueAt(endY, 1, 1);
-        table.getModel().setValueAt(endZ, 1, 2);
-
-        chunkTable.getModel().setValueAt(chunkSizeX, 0, 0);
-        chunkTable.getModel().setValueAt(chunkSizeY, 0, 1);
-        chunkTable.getModel().setValueAt(chunkSizeZ, 0, 2);
-    }
-
-    // Clear table.
-    private void clearTable(){
-        startX = 0;
-        startY = 0;
-        startZ = 0;
-
-        endX = 0;
-        endY = 0;
-        endZ = 0;
-
-        chunkSizeX = 0;
-        chunkSizeY = 0;
-        chunkSizeZ = 0;
 
         table.getModel().setValueAt(startX, 0, 0);
         table.getModel().setValueAt(startY, 0, 1);
