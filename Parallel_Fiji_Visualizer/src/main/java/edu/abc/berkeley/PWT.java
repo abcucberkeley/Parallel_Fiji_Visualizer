@@ -32,11 +32,13 @@ public class PWT {
 		
 		// Special case for ImageJ images
 		FileInfo info = cImagePlus.getOriginalFileInfo();
-		if(info.description!=null) {
-			if(info.description.contains("ImageJ")) {
-				FileSaver fs = new FileSaver(cImagePlus);
-		        fs.saveAsTiff(fileName);
-				return;
+		if(info!=null) {
+			if(info.description!=null) {
+				if(info.description.contains("ImageJ")) {
+					FileSaver fs = new FileSaver(cImagePlus);
+			        fs.saveAsTiff(fileName);
+					return;
+				}
 			}
 		}
 
