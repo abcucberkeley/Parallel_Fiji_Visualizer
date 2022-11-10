@@ -13,6 +13,7 @@ import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
 
 import java.io.File;
+import java.nio.file.Files;
 
 /*
  * PREVIOUS MEETING DISCUSSION
@@ -118,6 +119,8 @@ public class PWZGUI implements ActionListener{
 
     public Object[] cImageObj;
 
+    public int bits;
+
     JTable chunkTable; // Displaying the chunk sizes that are the default XYZ coords. (Though not expected to be changed.)
     JScrollPane chunkScrollPane; // Scroll pane, to help display the default values of the chunk size.
     
@@ -146,6 +149,8 @@ public class PWZGUI implements ActionListener{
         chunkSizeY = 256;
         chunkSizeZ = 256;
 
+        bits = 0;
+
         // Creates a thread. Lets be called and execute object in its own instance.
         // Basically like its own thread.
         Runnable r = new Runnable() {
@@ -162,7 +167,7 @@ public class PWZGUI implements ActionListener{
     
     // This commented constructor was just an idea (will deleted, if this implementation may not be needed.)
     // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
-    public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor){
+    public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, int bits){
         this.filepath = filepath;
         this.compressor = compressor;
         this.imageStack = imageStack;
@@ -180,6 +185,8 @@ public class PWZGUI implements ActionListener{
         this.chunkSizeX = chunkSizeX;
         this.chunkSizeY = chunkSizeY;
         this.chunkSizeZ = chunkSizeZ;
+
+        this.bits = bits;
 
         // Creates a thread. Lets be called and execute object in its own instance.
         // Basically like its own thread.
@@ -294,20 +301,27 @@ public class PWZGUI implements ActionListener{
 
         // Compressor = default is lz4 (though the user, should also be able to change the default as an option as well)
         compressorLabel.setText("Compressor: ");
-        compressorLabel.setBounds(180, 245, 130, 20); // NOTE: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
+        compressorLabel.setBounds(180, 195, 130, 20); // NOTE: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
         
         compressTextArea.setText(compressor);
         // compressTextArea.setBounds(265,245, 65, 19);
-        compressTextArea.setBounds(210,155, 65, 19);
+        compressTextArea.setBounds(265,195, 65, 19);
     }
 
     // Function to help organize the widget that handles the saving changes button.
     private void submitButton() {
         submitButton = new JButton("Save Changes");
         // saveChangesButton.setBounds(230, 55, 115, 25);
-        submitButton.setBounds(235, 55, 115, 25);
-
+        // submitButton.setBounds(212, 55, 115, 25);
+        submitButton.setBounds(175, 225, 115, 25);
         submitButton.addActionListener(this);
+    }
+
+    // Display error message window, if the file is not a zarr file.
+    private void errorMessage(){
+        String message = "File must be a zarr file";
+        // JOptionPane.showInputDialog(message);
+        JOptionPane.showMessageDialog(window, message);
     }
 
     // show function, has keeps track of all the added components into JFrame -> going to -> JPanel -> widgets/checkboxes/etc.
@@ -346,10 +360,7 @@ public class PWZGUI implements ActionListener{
     // Handling events happening with the interface.
     @Override
     public void actionPerformed(ActionEvent e){
-        // this.filepath = textArea.getText();
-
         if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.
-
         // Updates and clears the table.
         if(e.getSource() == submitButton) updateTable(); // Updates the table when we submit the changes, and then is the function that quits out the JFrame for this specific interface.
     }
@@ -357,7 +368,7 @@ public class PWZGUI implements ActionListener{
     // Loading filepath given.
     private void loadfile(){
         // File Handling stuff. (Referenced PWZ.java)
-        // PWZC pwzc = new PWZC(); // This code is only used to call the C-functionality...
+        // PWZC pwzc = new PWZC(); // This code is only used to call the C-functionality...  (Wont work on mac, so comment out in the meantime.)
         JFileChooser chooser = new JFileChooser();
         chooser.setApproveButtonText("Save");
 		chooser.setDialogTitle("Save as Zarr");
@@ -372,28 +383,27 @@ public class PWZGUI implements ActionListener{
 
         if(cImagePlus == null) return;
 
-        //--> We are replacing this piece of code, with an this.imageStack that is being passed an imageStack in the constructor. <--
+		// pwzc.parallelWriteZarr(this.filepath, this.cImageObj, this.startX, this.startY, this.startZ, this.endX, this.endY, this.endZ, this.chunkSizeX, this.chunkSizeY, this.chunkSizeZ, 1, this.compressor, 1, this.bits);
+    }
 
-        /*ImageStack cImageStack = cImagePlus.getImageStack();
-        Object[] cImageObj = cImageStack.getImageArray();
+    private boolean checkExtension(String path){
+        String extension = "";
+        int i = path.lastIndexOf('.');
 
+        if(i != -1) extension = path.substring(i+1);
+
+        // System.out.println("LOGGER: " + extension + ", i = " + i); // For debugging purposes.
         
-		int bits = cImageStack.getBitDepth(); // May need to get bits another way
-		String fileName = file.getPath();
-		int x = cImageStack.getWidth();
-		int y = cImageStack.getHeight();
-		int z = cImageStack.getSize();*/
+        if(extension.equals("zarr")) return true;
 
-        // This code will replace the commented code at the top.
-        this.filepath = file.getPath(); // This updates the filepath
-
-		// pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
+        return false;
     }
 
     // When "Submit changes" button is clicked, the given inputted information is updated
     private void updateTable(){
 
-        // This code will replace the commented code at the top.
+        // Checks if the text area box is a zarr file, or the filepath we load in from the browser button are a zarr file. If not display error message.
+        if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage();
         textArea.setText(this.filepath);
 
         table.getModel().setValueAt(startX, 0, 0);
