@@ -34,7 +34,8 @@ public class PRZ {
 		long memNeeded = dims[0]*dims[1]*dims[2]*(bits/8);
 		boolean isVirtual = memNeeded > mem.maxMemory();
 		
-		//TESTING
+		//----------TESTING----------
+		//isVirtual = memNeeded > 1843201;
 		//isVirtual = true;
 
 		int tBits = (int)bits;
@@ -79,7 +80,7 @@ public class PRZ {
 			else this.imp = imp;
 		}
 		else {
-			ParallelVirtualStack pVStack = new ParallelVirtualStack((int)dims[1],(int)dims[0],null,fileName);
+			ParallelVirtualStack pVStack = new ParallelVirtualStack((int)dims[1],(int)dims[0],(int)dims[2],null,fileName);
 			pVStack.setBitDepth(tBits);
 			ParallelImagePlus imp = new ParallelImagePlus(f.getName(),pVStack);
 			imp.show();

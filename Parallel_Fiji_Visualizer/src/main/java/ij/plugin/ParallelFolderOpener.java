@@ -165,7 +165,7 @@ public class ParallelFolderOpener implements PlugIn {
 		for (int i=0; i<list.length; i++) {
 			File f = (new File(directory+list[i]));
 			//Matt
-			if (!f.isDirectory() || list[i].contains(".zarr"))
+			if (!f.isDirectory() || list[i].endsWith(".zarr"))
 				fileList.add(list[i]);
 		}
 		if (fileList.size()<list.length)
@@ -208,11 +208,11 @@ public class ParallelFolderOpener implements PlugIn {
 				//ImagePlus imp = opener.openImage(directory, list[i]);
 				ImagePlus imp = null;
 				String cFile = directory+File.separator+list[i]; 
-				if(cFile.contains(".tif")) {
+				if(cFile.endsWith(".tif")) {
 					PRT prt = new PRT(cFile,false);
 					imp = prt.getImp();
 				}
-				else if(cFile.contains(".zarr")) {
+				else if(cFile.endsWith(".zarr")) {
 					PRZ prz = new PRZ(cFile,false);
 					imp = prz.getImp();
 				}
@@ -262,10 +262,10 @@ public class ParallelFolderOpener implements PlugIn {
 				tOpener.setSilentMode(true);
 				for (int i=this.start-1; i<list.length; i++) {
 					String cFile = directory+File.separator+list[i]; 
-					if(cFile.contains(".tif")) {
+					if(cFile.endsWith(".tif")) {
 						PRT prt = new PRT(cFile);
 					}
-					else if(cFile.contains(".zarr")) {
+					else if(cFile.endsWith(".zarr")) {
 						PRZ prz = new PRZ(cFile);
 					}
 					else {
@@ -296,11 +296,11 @@ public class ParallelFolderOpener implements PlugIn {
 				} else if (!openAsVirtualStack||stack==null) {
 					//imp = opener.openImage(directory, list[i]);
 					String cFile = directory+File.separator+list[i]; 
-					if(cFile.contains(".tif")) {
+					if(cFile.endsWith(".tif")) {
 						PRT prt = new PRT(cFile,false);
 						imp = prt.getImp();
 					}
-					else if(cFile.contains(".zarr")) {
+					else if(cFile.endsWith(".zarr")) {
 						PRZ prz = new PRZ(cFile,false);
 						imp = prz.getImp();
 					}
@@ -362,11 +362,11 @@ public class ParallelFolderOpener implements PlugIn {
 				} else if (!openAsVirtualStack||stack==null) {
 					//imp = opener.openImage(directory, list[i]);
 					String cFile = directory+File.separator+list[i]; 
-					if(cFile.contains(".tif")) {
+					if(cFile.endsWith(".tif")) {
 						PRT prt = new PRT(cFile,false);
 						imp = prt.getImp();
 					}
-					else if(cFile.contains(".zarr")) {
+					else if(cFile.endsWith(".zarr")) {
 						PRZ prz = new PRZ(cFile,false);
 						imp = prz.getImp();
 					}
@@ -512,11 +512,11 @@ public class ParallelFolderOpener implements PlugIn {
 			/*
 			String cFile = directory+File.separator+list[0];
 			ImagePlus imp2 = null;
-			if(cFile.contains(".tif")) {
+			if(cFile.endsWith(".tif")) {
 				PRT prt = new PRT(cFile,false);
 				imp2 = prt.getImp();
 			}
-			else if(cFile.contains(".zarr")) {
+			else if(cFile.endsWith(".zarr")) {
 				PRZ prz = new PRZ(cFile,false);
 				imp2 = prz.getImp();
 			}

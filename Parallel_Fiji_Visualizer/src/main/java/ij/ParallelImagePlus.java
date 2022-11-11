@@ -27,7 +27,8 @@ a list ImageProcessors of same type and size.
 */
 
 public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measurements, Cloneable {
-
+	
+	/*
 	/** 8-bit grayscale (unsigned)*/
 	public static final int GRAY8 = 0;
 
@@ -47,6 +48,7 @@ public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measu
 	public static final String flattenTitle = "flatten~canvas";
 
 	/** True if any changes have been made to this image. */
+	/*
 	public boolean changes;
 
 	protected Image img;
@@ -55,16 +57,19 @@ public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measu
 	protected Roi roi;
 	protected int currentSlice; // current stack index (one-based)
 	protected static final int OPENED=0, CLOSED=1, UPDATED=2;
+	*/
 	protected boolean ParallelCompositeImage;
+	/*
 	protected int width;
 	protected int height;
 	protected boolean locked;
+	*/
 	private int lockedCount;
 	private Thread lockingThread;
-	protected int nChannels = 1;
-	protected int nSlices = 1;
-	protected int nFrames = 1;
-	protected boolean dimensionsSet;
+	//protected int nChannels = 1;
+	//protected int nSlices = 1;
+	//protected int nFrames = 1;
+	//protected boolean dimensionsSet;
 
 	private ImageJ ij = IJ.getInstance();
 	private String title;
@@ -101,7 +106,7 @@ public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measu
 	public boolean setIJMenuBar = Prefs.setIJMenuBar;
 	private Plot plot;
 	private Properties imageProperties;
-
+	
 
     /** Constructs an uninitialized ImagePlus. */
     public ParallelImagePlus() {
@@ -154,7 +159,9 @@ public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measu
     }
 
 	/** Constructs an ImagePlus from a stack. */
+    //TESTING
     public ParallelImagePlus(String title, ImageStack stack) {
+    	//currentSlice = 1;
     	setStack(title, stack);
     	setID();
     }
@@ -739,7 +746,7 @@ public class ParallelImagePlus extends ImagePlus implements ImageObserver, Measu
     	if (currentSlice<1) setCurrentSlice(1);
     	boolean resetCurrentSlice = currentSlice>newStackSize;
     	if (resetCurrentSlice) setCurrentSlice(newStackSize);
-    	ImageProcessor ip = newStack.getProcessor(currentSlice);
+    	ImageProcessor ip = newStack.getProcessor(currentSlice+1);
     	boolean dimensionsChanged = width>0 && height>0 && (width!=ip.getWidth()||height!=ip.getHeight());
     	if (this.stack==null)
     	    newStack.viewers(+1);
