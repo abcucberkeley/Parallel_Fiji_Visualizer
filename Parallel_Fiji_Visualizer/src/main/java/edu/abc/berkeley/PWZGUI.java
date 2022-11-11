@@ -344,7 +344,19 @@ public class PWZGUI implements ActionListener{
         if(returnValue == JFileChooser.APPROVE_OPTION) file = chooser.getSelectedFile();
         if(file == null) return;
 
-        this.filepath = file.getPath();
+        ImagePlus cImagePlus = IJ.getImage();
+
+        if(cImagePlus == null) return;
+
+        ImageStack cImageStack = cImagePlus.getImageStack();
+        Object[] cImageObj = cImageStack.getImageArray();
+
+        
+		int bits = cImageStack.getBitDepth(); // May need to get bits another way
+		String fileName = file.getPath();
+		int x = cImageStack.getWidth();
+		int y = cImageStack.getHeight();
+		int z = cImageStack.getSize();
 
 		// pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
     }
