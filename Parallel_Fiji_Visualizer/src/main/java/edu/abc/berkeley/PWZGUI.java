@@ -13,74 +13,36 @@ import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
 
 import java.io.File;
-import java.nio.file.Files;
-
-/*
- * PREVIOUS MEETING DISCUSSION
- * - Implement constructor that takes in this many arguments. (As shown below)
- * ** PWZGUI(string, long, long, long, long, long, long, long, long, long, string) // filepath: string, Starting XYZ: long, ending XYZ: long, chunkSize: long, compressor: string
- * CHANGES NEEDED TO BE MADE TO THE INTERFACE
- * 1.) Crop Button. By brinding down the crop box, and positioning the widgets similarily to what is being shown in the XML diagrams that we discussed and promptly designed in diagrams.io
- * --> Purpose: Cropping the file size of the zarr file we are trying to load by clicking the browse widget.
- * 2.) Bring Down and adjust crop widget. Crop widget adjust to the XML formatting. (near/in front of starting and ending XYZ)
- * 3.) Make Starting and ending XYZ, with chunk and default compressor seperate from each other
-
- * SIDE NOTE: (Describing by thought process.)
- * 1. table for starting & ending XYZ
- * 2. another for chunk and compressor.
- * NOTE: Dont actually write default, just put compressor.
- */
 
 /*
  * NOTES
- * 1.) Fix interface to look similarily to the wxWidget diagram from diagram.io (DONE)
- * 2.) [IMPORTANT] Integrate the JFileChooser to being used by this interface. (DONE)
- * 3.) Seperate Chunk Size and Compressor into their own rows and cols fields. (DONE)
- * SOMETHING TO NOTE: Dont actually write default, just put compressor.
- * 4.) Re-adjusting the crop file size widget to a similar position referenced to the diagrams.io design. (DONE)
- * 5.) Once implemented. Refactor and clean up code. Debugging and troubleshooting, so there is no unecessary code not being used. (DONE)
- * 
- * IN-MEETING DISCUSSION
- * - Proposing there be a coordinates class. So, instead of passing in 6 variables, we can pass two objects.  Also for better readability to the programmer.
- * - Easier to handly the X,Y, and Z coordinates.
- * - Or we can keep both implementation, in case we may need to edit the specific values directly, possibly.
+ * 1.) Fix interface to look similarily to the wxWidget diagram from diagram.io [DONE]
+ * 2.) [IMPORTANT] Integrate the JFileChooser to being used by this interface. [DONE]
+ * 3.) Seperate Chunk Size and Compressor into their own rows and cols fields. [DONE]
+ * SOMETHING TO NOTE: Dont actually write default, just put compressor. [DONE]
+ * 4.) Re-adjusting the crop file size widget to a similar position referenced to the diagrams.io design. [DONE]
+ * 5.) Once implemented. Refactor and clean up code. Debugging and troubleshooting, so there is no unecessary code not being used. [DONE]
  */
-
- /*
-  * WRAP UP NOTES FOR THIS PROJECT
-  * - Constructor chnage variable names (like start_x to startX)
-  * - Change default_x to chunkX
-  * - Submit button to make changes.
-  * - Compressor default is lz4 not iz4.
-*/
 
 /*
  * HOW TO RESIZES WIDGETS (MEETING NOTES)
  * --> Using custom grid layouts. (For future ref, for resizeable widgets)
- * 
  * FLow should work (Refactor)
  
 What should the interface do actually do?
 
+TASKS [Current]
  * - Remove crop button. (Should use coordinates) [DONE]
  * 1.) Should be able to browse even without typing the filepath [DONE]
  * 2.) Filepath taking in the value from file.getPath(). [???]
  * 3.) Update text area and this.filepath when browsing to a file. [DONE]
  * 4.) Keep in mind: lz4 should be an editable text box (like the filepath text area) [DONE]
- * 5.) Save changes to submit, and set location to be at the bottom of the window. 
- * 6.) Submit button clicked, then should quit out of the form. (Close this JFrame only, not the entire software)
- * 
- * VARIABLES
- * - Add in the constructor params ImageStack array, in the constructor.
- * - Take out default values variables in update table.
- * 
- * What to check for? (Error Checking)
- * - Check for only .zarr file. (If not, then display error message), these are the only error-checking required right now.
- * 
+ * 5.) Save changes to submit, and set location to be at the bottom of the window. [DONE]
+ * 6.) Submit button clicked, then should quit out of the form. (Close this JFrame only, not the entire software) [DONE]
  */
 
 /*
-    C++ MAIN PROJECT.
+C++ MAIN PROJECT.
  * 1.) Release and get matlab working with C++ Qt (version, 6.2.4)
  */
 
@@ -119,7 +81,7 @@ public class PWZGUI implements ActionListener{
 
     public Object[] cImageObj;
 
-    public int bits;
+    public long bits;
 
     JTable chunkTable; // Displaying the chunk sizes that are the default XYZ coords. (Though not expected to be changed.)
     JScrollPane chunkScrollPane; // Scroll pane, to help display the default values of the chunk size.
@@ -167,7 +129,7 @@ public class PWZGUI implements ActionListener{
     
     // This commented constructor was just an idea (will deleted, if this implementation may not be needed.)
     // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
-    public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, int bits){
+    public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, long bits){
         this.filepath = filepath;
         this.compressor = compressor;
         this.imageStack = imageStack;
