@@ -88,7 +88,7 @@ public class PWZGUI implements ActionListener{
     
     
 
-    JButton submitButton; // To submit changes, then close this specific interface. (Not the entire software.)
+    JButton saveButton; // To submit changes, then close this specific interface. (Not the entire software.)
 
     public PWZGUI() {
         filepath = "";
@@ -174,7 +174,7 @@ public class PWZGUI implements ActionListener{
         setupTextProperties(); // Handling button widget
         grabCoordinates();
         chunkAndCompressorProperties();
-        submitButton(); // Submit button: What this does is submit the given changes, then close this specific interface.
+        save(); // Submit button: What this does is submit the given changes, then close this specific interface.
         show(); // Handling adding all the widgets into the panel, while panel is being referred by the JFrame.
 
         // Setting window/jframe properties
@@ -271,18 +271,16 @@ public class PWZGUI implements ActionListener{
     }
 
     // Function to help organize the widget that handles the saving changes button.
-    private void submitButton() {
-        submitButton = new JButton("Save Changes");
-        // saveChangesButton.setBounds(230, 55, 115, 25);
-        // submitButton.setBounds(212, 55, 115, 25);
-        submitButton.setBounds(175, 225, 115, 25);
-        submitButton.addActionListener(this);
+    // When browsing this save button will update the text box.
+    private void save() {
+        saveButton = new JButton("Save Changes");
+        saveButton.setBounds(175, 225, 115, 25);
+        saveButton.addActionListener(this);
     }
 
     // Display error message window, if the file is not a zarr file.
     private void errorMessage(){
         String message = "File must be a zarr file";
-        // JOptionPane.showInputDialog(message);
         JOptionPane.showMessageDialog(window, message);
     }
 
@@ -306,10 +304,7 @@ public class PWZGUI implements ActionListener{
         window.add(compressTextArea);
 
         
-        window.add(submitButton);
-
-        
-        
+        window.add(saveButton);
 
         // Setting window/jframe properties
         // window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -323,8 +318,11 @@ public class PWZGUI implements ActionListener{
     @Override
     public void actionPerformed(ActionEvent e){
         if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.
+
         // Updates and clears the table.
-        if(e.getSource() == submitButton) updateTable(); // Updates the table when we submit the changes, and then is the function that quits out the JFrame for this specific interface.
+        if(e.getSource() == saveButton) { 
+            updateTable(); // Updates the table when we submit the changes, and then is the function that quits out the JFrame for this specific interface.
+        }
     }
 
     // Loading filepath given.
@@ -345,6 +343,8 @@ public class PWZGUI implements ActionListener{
 
         if(cImagePlus == null) return;
 
+        this.filepath = file.getPath();
+
 		// pwzc.parallelWriteZarr(this.filepath, this.cImageObj, this.startX, this.startY, this.startZ, this.endX, this.endY, this.endZ, this.chunkSizeX, this.chunkSizeY, this.chunkSizeZ, 1, this.compressor, 1, this.bits);
     }
 
@@ -361,12 +361,13 @@ public class PWZGUI implements ActionListener{
         return false;
     }
 
-    // When "Submit changes" button is clicked, the given inputted information is updated
+    // When "Save" button is clicked, updates interface.
     private void updateTable(){
 
-        // Checks if the text area box is a zarr file, or the filepath we load in from the browser button are a zarr file. If not display error message.
+        // Checks if text box is a .zarr file. If not show error msg.
         if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage();
-        textArea.setText(this.filepath);
+
+        textArea.setText(this.filepath); // updates text area.
 
         table.getModel().setValueAt(startX, 0, 0);
         table.getModel().setValueAt(startY, 0, 1);
@@ -379,7 +380,7 @@ public class PWZGUI implements ActionListener{
         chunkTable.getModel().setValueAt(chunkSizeY, 0, 1);
         chunkTable.getModel().setValueAt(chunkSizeZ, 0, 2);
 
-        window.dispose(); // Dispose() is how we will exit, once the submit changes have been made.
+        // window.dispose(); // Dispose() is how we will exit, once the submit changes have been made.
     }
 
     // For testing and debugging the interface with a main method.
