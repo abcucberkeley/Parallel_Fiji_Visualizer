@@ -50,7 +50,7 @@ public class PWZGUI implements ActionListener{
     JTable chunkTable; // Table to show Chunk Size XYZ. (Changeable)
     JScrollPane chunkScrollPane;
     
-    JButton saveButton; // save changes
+    JButton save; // save changes
 
     public PWZGUI() {
         filepath = "";
@@ -216,9 +216,9 @@ public class PWZGUI implements ActionListener{
     // Function to help organize the widget that handles the saving changes button.
     // When browsing this save button will update the text box.
     private void save() {
-        saveButton = new JButton("Save");
-        saveButton.setBounds(175, 225, 115, 25);
-        saveButton.addActionListener(this);
+        save = new JButton("Save");
+        save.setBounds(175, 225, 115, 25);
+        save.addActionListener(this);
     }
 
     // Display error message window, if the file is not a zarr file.
@@ -242,7 +242,7 @@ public class PWZGUI implements ActionListener{
         window.add(chunkScrollPane);
         window.add(compressorLabel);
         window.add(compressTextArea);
-        window.add(saveButton);
+        window.add(save);
         window.add(textAreaPanel, BorderLayout.CENTER); // This is how the TextArea and Labels, are being centered to the TOP of the interface.
 
         window.pack();
@@ -254,7 +254,7 @@ public class PWZGUI implements ActionListener{
     public void actionPerformed(ActionEvent e){
 
         if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.        
-        if(e.getSource() == saveButton) update(); // Updates the changes to interface.
+        if(e.getSource() == save) update(); // Updates the changes to interface.
 
     }
 
