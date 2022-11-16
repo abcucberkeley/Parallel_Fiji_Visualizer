@@ -15,7 +15,7 @@ public class PWZ {
 		chooser.setApproveButtonText("Save");
 		chooser.setDialogTitle("Save as Zarr");
 		File f = null;
-		int returnValue = chooser.showOpenDialog(null);
+		int returnValue = chooser.showDialog(null,"Save");
 		if(returnValue == JFileChooser.APPROVE_OPTION) {
 			f = chooser.getSelectedFile() ;
 		}
