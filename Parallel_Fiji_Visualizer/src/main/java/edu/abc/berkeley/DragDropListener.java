@@ -49,7 +49,7 @@ class DragDropListener implements DropTargetListener {
                     	String fName = file.getPath();
                     	
                     	if (file.isDirectory()) {
-                    		if(fName.contains(".zarr")) {
+                    		if(fName.endsWith(".zarr")) {
                     			new Thread(() -> {
 	                    			new PRZ(fName);
 	                        	}).start();
@@ -62,7 +62,7 @@ class DragDropListener implements DropTargetListener {
                     		}
                     		continue;
                     	}
-                    	else if(!fName.contains(".tif")) {
+                    	else if(!fName.endsWith(".tif")) {
                     		// Check if Windows destroyed the name because it can't handle paths greater than 256 chars
                     		// the contains function doesn't work so I have to do this. It's a Windows thing I suppose
                     		if(!SystemUtils.IS_OS_WINDOWS || fName.length() < 4 || StringUtils.difference(fName.substring(fName.length()-4),".TIF") != "") {

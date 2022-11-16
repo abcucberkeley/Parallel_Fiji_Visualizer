@@ -5,9 +5,13 @@ import ij.gui.ImageCanvas;
 import ij.util.Tools;
 import ij.plugin.FolderOpener;
 import java.io.*;
+import java.lang.reflect.Array;
 import java.awt.*;
 import java.awt.image.ColorModel;
+import java.util.Arrays;
 import java.util.Properties;
+
+import edu.abc.berkeley.PRZ;
 
 /** This class represents an array of disk-resident images. */
 public class ParallelVirtualStack extends ImageStack {
@@ -20,6 +24,9 @@ public class ParallelVirtualStack extends ImageStack {
 	private Properties  properties;
 	private boolean generateData;
 	private int[] indexes;  // used to translate non-CZT hyperstack slice numbers
+	private int width;
+	private int height;
+
 
 	
 	/** Default constructor. */
@@ -44,6 +51,23 @@ public class ParallelVirtualStack extends ImageStack {
 		names = new String[INITIAL_SIZE];
 		labels = new String[INITIAL_SIZE];
 	}
+	
+	// TESTING
+	public ParallelVirtualStack(int width, int height, int depth, ColorModel cm, String path) {
+		super(width, height, cm);
+		this.height = height;
+		this.width = width;
+		path = IJ.addSeparator(path);
+		this.path = path;
+		names = new String[depth];
+		//Arrays.fill(names,path);
+		
+		labels = new String[depth];
+		nSlices = 0;
+		for(int i = 0; i < depth; i++) {
+			this.addSlice("");
+		}
+	}
 
 	/** Creates a virtual stack with no backing storage.
 	This example creates a one million slice virtual
@@ -51,7 +75,6 @@ public class ParallelVirtualStack extends ImageStack {
 	<pre>
     stack = new VirtualStack(1024,1024,1000000);
     new ImagePlus("No Backing Store Virtual Stack",stack).show();
-	</pre>
 	*/
 	public ParallelVirtualStack(int width, int height, int slices) {
 		this(width, height, slices, "8-bit");
@@ -167,7 +190,10 @@ public class ParallelVirtualStack extends ImageStack {
 		Opener opener = new Opener();
 		opener.setSilentMode(true);
 		IJ.redirectErrorMessages(true);
-		ImagePlus imp = opener.openImage(path+names[n-1]);
+		// Matt TESTING
+		//ImagePlus imp = opener.openImage(path+names[n-1]);
+		PRZ prz = new PRZ(path+names[n-1], 0, 0, n-1, height, width, n, false);
+		ImagePlus imp = prz.getImp(); 
 		IJ.redirectErrorMessages(false);
 		ImageProcessor ip = null;
 		int depthThisImage = 0;
