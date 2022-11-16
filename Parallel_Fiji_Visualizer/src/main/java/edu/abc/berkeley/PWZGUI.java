@@ -254,7 +254,7 @@ public class PWZGUI implements ActionListener{
     public void actionPerformed(ActionEvent e){
 
         if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.        
-        if(e.getSource() == save) update(); // Updates the changes to interface.
+        if(e.getSource() == save) submit(); // Updates the changes to interface.
 
     }
 
@@ -287,20 +287,26 @@ public class PWZGUI implements ActionListener{
         return false;
     }
 
-    // When "Save" is clicked then updates interface.
-    private void update(){
+    // "Submit" changes when "Save" clicked then updates interface.
+    private void submit(){
         if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage(); // Checks if the file is a zarr file before we save and update
 
         // Manually adding inputs into the charts. Maybe a better way, but for now.
-        table.getModel().setValueAt(startX, 0, 0);
-        table.getModel().setValueAt(startY, 0, 1);
-        table.getModel().setValueAt(startZ, 0, 2);
-        table.getModel().setValueAt(endX, 1, 0);
-        table.getModel().setValueAt(endY, 1, 1);
-        table.getModel().setValueAt(endZ, 1, 2);
+        startX = (long) table.getModel().getValueAt(0, 0);
+        startY = (long) table.getModel().getValueAt(0, 1);
+        startZ = (long) table.getModel().getValueAt(0, 2);
+        endX = (long) table.getModel().getValueAt(1, 0);
+        endY = (long) table.getModel().getValueAt(1, 1);
+        endZ = (long) table.getModel().getValueAt(1, 2);
 
-        chunkTable.getModel().setValueAt(chunkSizeX, 0, 0);
-        chunkTable.getModel().setValueAt(chunkSizeY, 0, 1);
-        chunkTable.getModel().setValueAt(chunkSizeZ, 0, 2);
+        chunkSizeX = (long) chunkTable.getModel().getValueAt(0, 0);
+        chunkSizeY = (long) chunkTable.getModel().getValueAt(0, 1);
+        chunkSizeZ = (long) chunkTable.getModel().getValueAt(0, 2);
+        
+        bits = imageStack.getBitDepth();
+        
+        PWZC pwzc = new PWZC();
+        
+        pwzc.parallelWriteZarr(filepath, cImageObj, startX, startY, startZ, endX, endY, endZ, chunkSizeX, chunkSizeY, chunkSizeZ, 1, compressor, 1, bits);
     }
 }
