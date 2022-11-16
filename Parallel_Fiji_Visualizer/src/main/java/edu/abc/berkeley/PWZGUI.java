@@ -216,7 +216,7 @@ public class PWZGUI implements ActionListener{
     // Function to help organize the widget that handles the saving changes button.
     // When browsing this save button will update the text box.
     private void save() {
-        saveButton = new JButton("Save Changes");
+        saveButton = new JButton("Save");
         saveButton.setBounds(175, 225, 115, 25);
         saveButton.addActionListener(this);
     }
