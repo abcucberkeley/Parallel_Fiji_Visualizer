@@ -1,11 +1,7 @@
 package edu.abc.berkeley;
 import javax.swing.*;
-import javax.swing.event.TableModelEvent;
-import javax.swing.event.TableModelListener;
 import javax.swing.table.DefaultTableModel;
 
-import ij.IJ;
-import ij.ImagePlus;
 import ij.ImageStack;
 
 import java.awt.*;
@@ -14,43 +10,11 @@ import java.awt.event.ActionEvent;
 
 import java.io.File;
 
-/*
- * NOTES
- * 1.) Fix interface to look similarily to the wxWidget diagram from diagram.io [DONE]
- * 2.) [IMPORTANT] Integrate the JFileChooser to being used by this interface. [DONE]
- * 3.) Seperate Chunk Size and Compressor into their own rows and cols fields. [DONE]
- * SOMETHING TO NOTE: Dont actually write default, just put compressor. [DONE]
- * 4.) Re-adjusting the crop file size widget to a similar position referenced to the diagrams.io design. [DONE]
- * 5.) Once implemented. Refactor and clean up code. Debugging and troubleshooting, so there is no unecessary code not being used. [DONE]
- */
-
-/*
- * HOW TO RESIZES WIDGETS (MEETING NOTES)
- * --> Using custom grid layouts. (For future ref, for resizeable widgets)
- * FLow should work (Refactor)
- 
-What should the interface do actually do?
-
-TASKS [Current]
- * - Remove crop button. (Should use coordinates) [DONE]
- * 1.) Should be able to browse even without typing the filepath [DONE]
- * 2.) Filepath taking in the value from file.getPath(). [???]
- * 3.) Update text area and this.filepath when browsing to a file. [DONE]
- * 4.) Keep in mind: lz4 should be an editable text box (like the filepath text area) [DONE]
- * 5.) Save changes to submit, and set location to be at the bottom of the window. [DONE]
- * 6.) Submit button clicked, then should quit out of the form. (Close this JFrame only, not the entire software) [DONE]
- */
-
-/*
-C++ MAIN PROJECT.
- * 1.) Release and get matlab working with C++ Qt (version, 6.2.4)
- */
-
 public class PWZGUI implements ActionListener{
     JFrame window;
     JPanel textAreaPanel;
 
-    JButton browse; // Browse specific filepath.
+    JButton browse; // Browse specific files/folders.
 
     // Text box
     JLabel textAreaLabel;
@@ -60,21 +24,21 @@ public class PWZGUI implements ActionListener{
     JTextArea compressTextArea;// Compressor Text Area
     JLabel compressorLabel; // Default Compressor
 
-    // Starting and ending XYZ
+    
     JTable table;
     JScrollPane scrollPane;
     
-    // Data retrievers.
     JLabel startCoordsLabel;
     JLabel endCoordsLabel;
 
     public String filepath;
     public String compressor;
+
+    // Starting and ending XYZ
     public long startX=0, startY=0, startZ=0;
     public long endX=0, endY=0, endZ=0;
 
     // Default values for the chunk sizes.
-    // Also, not reusing other starting and ending, so doesnt alter those variables.
     public long chunkSizeX=256, chunkSizeY=256, chunkSizeZ=256;
 
     public ImageStack imageStack;
@@ -83,25 +47,18 @@ public class PWZGUI implements ActionListener{
 
     public long bits;
 
-    JTable chunkTable; // Displaying the chunk sizes that are the default XYZ coords. (Though not expected to be changed.)
-    JScrollPane chunkScrollPane; // Scroll pane, to help display the default values of the chunk size.
+    JTable chunkTable; // Table to show Chunk Size XYZ. (Changeable)
+    JScrollPane chunkScrollPane;
     
-    
-
-    JButton saveButton; // To submit changes, then close this specific interface. (Not the entire software.)
+    JButton saveButton; // save changes
 
     public PWZGUI() {
         filepath = "";
-        compressor = "lz4"; // Compressor is lz4. (NOTE, this value does not change by default whatsoever)
+        compressor = "lz4"; // Default expected to be lz4. (Is changeable)
         imageStack = null;
-
-        // Starting coords
-        // Starting and ending coordinates are the expected values to be changed by user using the intercface.
         startX = 0;
         startY = 0;
         startZ = 0;
-        
-        // Ending coords
         endX = 0;
         endY = 0;
         endZ = 0;
@@ -126,9 +83,7 @@ public class PWZGUI implements ActionListener{
         // http://docs.oracle.com/javase/tutorial/uiswing/concurrency
         SwingUtilities.invokeLater(r);
     }
-    
-    // This commented constructor was just an idea (will deleted, if this implementation may not be needed.)
-    // public PWZGUI(String filepath, Coords starting, Coords ending, String compressor){
+
     public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, long bits){
         this.filepath = filepath;
         this.compressor = compressor;
@@ -161,23 +116,19 @@ public class PWZGUI implements ActionListener{
 
         SwingUtilities.invokeLater(r);
     }
-
+    
     private void init(){
-
         window = new JFrame("Write Zarr");
         textAreaPanel = new JPanel(); // Main Panel
         compressorLabel = new JLabel();
         compressTextArea = new JTextArea();
 
-
-
         setupTextProperties(); // Handling button widget
         grabCoordinates();
         chunkAndCompressorProperties();
-        save(); // Submit button: What this does is submit the given changes, then close this specific interface.
-        show(); // Handling adding all the widgets into the panel, while panel is being referred by the JFrame.
+        save(); // Save: What this does is submit the given changes, then close this specific interface.
+        show(); // Just adds in buttons to frame.
 
-        // Setting window/jframe properties
         window.setSize(600, 300);
         window.setVisible(true);
     }
@@ -190,7 +141,7 @@ public class PWZGUI implements ActionListener{
 
         // Handling text box and label
         textAreaLabel = new JLabel("Filepath");
-        textAreaLabel.setBounds(125, 5, 75, 15);
+        textAreaLabel.setBounds(125, 5, 90, 15);
 
         textArea = new JTextArea(1, 6);
         textArea.setBounds(215, 5, 75, 25);
@@ -203,8 +154,6 @@ public class PWZGUI implements ActionListener{
         startCoordsLabel = new JLabel("Start");
         endCoordsLabel = new JLabel("End");
 
-        // startCoordsLabel.setBounds(115, 90, 150, 150);
-        // endCoordsLabel.setBounds(115, 110, 150, 150);
         startCoordsLabel.setBounds(140, 5, 150, 150);
         endCoordsLabel.setBounds(145, 20, 150, 150);
 
@@ -222,7 +171,6 @@ public class PWZGUI implements ActionListener{
         };
 
         table = new JTable(tableModel);
-        // table.setBounds(30, 30, 950, 950);
         table.setBounds(235, 55, 115, 25);
 
         // Adding columns to the table
@@ -235,7 +183,6 @@ public class PWZGUI implements ActionListener{
 
         scrollPane = new JScrollPane(table);
         scrollPane.setPreferredSize(new Dimension(250, 100)); // Actually setting how large the scroll pane is.
-        // scrollPane.setBounds(172, 145, 250, 53); // Set where we want the JTable to be located in the JFrame. (Actually adjusts X and Y coords, and width and height)
         scrollPane.setBounds(195, 55, 230, 53);
         scrollPane.setVisible(true);
     }
@@ -255,18 +202,14 @@ public class PWZGUI implements ActionListener{
         model.addRow(data);
 
         chunkScrollPane = new JScrollPane(chunkTable);
-        // Original width = 210, height = 75
         chunkScrollPane.setPreferredSize(new Dimension(200, 100)); // Actually setting how large the scroll pane is.
-        // chunkScrollPane.setBounds(170, 205, 255, 40); // Set where we want the JTable to be located in the JFrame. (This line is what updates the X, Y coordinates of widget)
         chunkScrollPane.setBounds(195, 125, 230, 53); // Set where we want the JTable to be located in the JFrame. (This line is what updates the X, Y coordinates of widget)
         chunkScrollPane.setVisible(true);
 
-        // Compressor = default is lz4 (though the user, should also be able to change the default as an option as well)
         compressorLabel.setText("Compressor: ");
-        compressorLabel.setBounds(180, 195, 130, 20); // NOTE: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
+        compressorLabel.setBounds(180, 195, 130, 20); // NOTE FOR REF: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
         
         compressTextArea.setText(compressor);
-        // compressTextArea.setBounds(265,245, 65, 19);
         compressTextArea.setBounds(265,195, 65, 19);
     }
 
@@ -284,91 +227,71 @@ public class PWZGUI implements ActionListener{
         JOptionPane.showMessageDialog(window, message);
     }
 
-    // show function, has keeps track of all the added components into JFrame -> going to -> JPanel -> widgets/checkboxes/etc.
+
     private void show(){
-        // NOTE: Add to panel
-        // Adding/packing all widgets into the panel, then referring that panel to the window.
-        // This portion adds in the user input interface interaction widgets into there own panel.
+        // sets up text area box.
         textAreaPanel.add(textAreaLabel);
         textAreaPanel.add(textArea);
         textAreaPanel.add(browse);
-
         textAreaPanel.setSize(50, 50);
 
-        // Adds the other widgets into the JFrame window themselves.
+        // sets up widgets to interface.
         window.add(startCoordsLabel);
         window.add(endCoordsLabel);
         window.add(scrollPane);
         window.add(chunkScrollPane);
         window.add(compressorLabel);
         window.add(compressTextArea);
-
-        
         window.add(saveButton);
-
-        // Setting window/jframe properties
-        // window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         window.add(textAreaPanel, BorderLayout.CENTER); // This is how the TextArea and Labels, are being centered to the TOP of the interface.
+
         window.pack();
         window.setLocation(new Point(900, 250)); // Hopefully puts the screen in the center of the monitor (vary depending on monitoring)
         window.setVisible(true);
     }
 
-    // Handling events happening with the interface.
     @Override
     public void actionPerformed(ActionEvent e){
-        if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.
 
-        // Updates and clears the table.
-        if(e.getSource() == saveButton) { 
-            updateTable(); // Updates the table when we submit the changes, and then is the function that quits out the JFrame for this specific interface.
-        }
+        if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.        
+        if(e.getSource() == saveButton) update(); // Updates the changes to interface.
+
     }
 
-    // Loading filepath given.
+    // Load new/selected file.
     private void loadfile(){
-        // File Handling stuff. (Referenced PWZ.java)
-        // PWZC pwzc = new PWZC(); // This code is only used to call the C-functionality...  (Wont work on mac, so comment out in the meantime.)
         JFileChooser chooser = new JFileChooser();
         chooser.setApproveButtonText("Save");
 		chooser.setDialogTitle("Save as Zarr");
         File file = null;
 
-        int returnValue = chooser.showOpenDialog(null);
+        int returnValue = chooser.showDialog(null, "Save");
 
         if(returnValue == JFileChooser.APPROVE_OPTION) file = chooser.getSelectedFile();
+        
         if(file == null) return;
 
-        ImagePlus cImagePlus = IJ.getImage();
-
-        if(cImagePlus == null) return;
-
         this.filepath = file.getPath();
-
-		// pwzc.parallelWriteZarr(this.filepath, this.cImageObj, this.startX, this.startY, this.startZ, this.endX, this.endY, this.endZ, this.chunkSizeX, this.chunkSizeY, this.chunkSizeZ, 1, this.compressor, 1, this.bits);
+        textArea.setText(this.filepath); // updates text area.
     }
 
+    // Function for handling file extensions.
     private boolean checkExtension(String path){
         String extension = "";
         int i = path.lastIndexOf('.');
 
         if(i != -1) extension = path.substring(i+1);
-
-        // System.out.println("LOGGER: " + extension + ", i = " + i); // For debugging purposes.
         
         if(extension.equals("zarr")) return true;
 
         return false;
     }
 
-    // When "Save" button is clicked, updates interface.
-    private void updateTable(){
+    // When "Save" is clicked then updates interface.
+    private void update(){
+        if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage(); // Checks if the file is a zarr file before we save and update
 
-        // Checks if text box is a .zarr file. If not show error msg.
-        if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage();
-
-        textArea.setText(this.filepath); // updates text area.
-
+        // Manually adding inputs into the charts. Maybe a better way, but for now.
         table.getModel().setValueAt(startX, 0, 0);
         table.getModel().setValueAt(startY, 0, 1);
         table.getModel().setValueAt(startZ, 0, 2);
@@ -379,10 +302,5 @@ public class PWZGUI implements ActionListener{
         chunkTable.getModel().setValueAt(chunkSizeX, 0, 0);
         chunkTable.getModel().setValueAt(chunkSizeY, 0, 1);
         chunkTable.getModel().setValueAt(chunkSizeZ, 0, 2);
-
-        // window.dispose(); // Dispose() is how we will exit, once the submit changes have been made.
     }
-
-    // For testing and debugging the interface with a main method.
-   // public static void main(String[] args) { new PWZGUI(); }
 }
