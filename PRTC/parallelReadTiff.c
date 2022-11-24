@@ -296,8 +296,12 @@ uint8_t isImageJIm(const char* fileName){
 	TIFF* tif = TIFFOpen(fileName, "r");
 	if(!tif) return 0;
 	char* tiffDesc = NULL;
+	char* software = NULL;
 	if(TIFFGetField(tif, TIFFTAG_IMAGEDESCRIPTION, &tiffDesc)){
 		if(strstr(tiffDesc, "ImageJ")){
+			if(TIFFGetField(tif, TIFFTAG_SOFTWARE, &software)){
+				if(strstr(software,"Bio-Formats")) return 0;
+			}
 			return 1;
 		}
 	}
