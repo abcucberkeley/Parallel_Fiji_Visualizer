@@ -91,11 +91,11 @@
 #define ZIP_SUPPORT 1
 
 /* Support libdeflate enhanced compression */
-/* #undef LIBDEFLATE_SUPPORT */
+#define LIBDEFLATE_SUPPORT 1
 
 /* Support strip chopping (whether or not to convert single-strip uncompressed
    images to multiple strips of ~8Kb to reduce memory usage) */
-#define STRIPCHOP_DEFAULT 1
+#define STRIPCHOP_DEFAULT TIFF_STRIPCHOP
 
 /* Enable SubIFD tag (330) support */
 #define SUBIFD_SUPPORT 1

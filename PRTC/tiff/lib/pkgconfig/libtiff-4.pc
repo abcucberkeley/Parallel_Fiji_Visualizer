@@ -1,11 +1,12 @@
 prefix=C:/Program Files (x86)/tiff
-exec_prefix=C:/Program Files (x86)/tiff
-libdir=C:/Program Files (x86)/tiff/lib
-includedir=C:/Program Files (x86)/tiff/include
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
 
 Name: libtiff
 Description:  Tag Image File Format (TIFF) library.
-Version: 
-Libs: -LC:/Program Files (x86)/tiff/lib -ltiff
-Libs.private: 
-Cflags: -IC:/Program Files (x86)/tiff/include
+Version: 4.4.0
+Libs: -L${libdir} -ltiff
+Libs.private:  -ldeflate
+Cflags: -I${includedir}
+Requires.private:  zlib libzstd
