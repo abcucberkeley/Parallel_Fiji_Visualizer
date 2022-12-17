@@ -270,6 +270,10 @@ public class ParallelFolderOpener implements PlugIn {
 					}
 					else {
 						ImagePlus tImp = tOpener.openImage(directory, list[i]);
+						if(tImp == null) {
+							IJ.log(directory + list[i] + " cannot be opened. Skipping");
+							continue;
+						}
 						tImp.show();
 					}
 				}
