@@ -18,7 +18,7 @@ public class PWT {
 		chooser.setApproveButtonText("Save");
 		chooser.setDialogTitle("Save");
 		File f = null;
-		int returnValue = chooser.showOpenDialog( null ) ;
+		int returnValue = chooser.showDialog(null,"Save");
 		if(returnValue == JFileChooser.APPROVE_OPTION) {
 			f = chooser.getSelectedFile() ;
 		}

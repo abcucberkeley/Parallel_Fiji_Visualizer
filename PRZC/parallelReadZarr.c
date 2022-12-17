@@ -589,7 +589,8 @@ void* readZarrParallelHelper(const char* folderName, uint64_t startX, uint64_t s
 	void* zarr = malloc(dim[0]*dim[1]*dim[2]*(bits/8));
 	parallelReadZarr(zarr,folderName,startX,startY,startZ,endX,endY,endZ,chunkXSize,chunkYSize,chunkZSize,shapeX,shapeY,shapeZ,bits,order,cname);
 	// May need to add a check for if the data is f order or c order for ImageJ
-	if(imageJIm && (order == 'F' || order == 'f')){
+	// For the c order images I have tested, we also have to do this flip for now
+	if(imageJIm /*&& (order == 'F' || order == 'f')*/){
 		void* zarrC = malloc(dim[0]*dim[1]*dim[2]*(bits/8));
 		#pragma omp parallel for
 		for(uint64_t k = 0; k < dim[2]; k++){
