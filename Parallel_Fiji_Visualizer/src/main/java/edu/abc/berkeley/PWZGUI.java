@@ -10,49 +10,50 @@ import java.awt.event.ActionEvent;
 
 import java.io.File;
 
-public class PWZGUI implements ActionListener{
-    JFrame window;
-    JPanel textAreaPanel;
+public class PWZGUI extends JFrame implements ActionListener{
+    // Panel contains three fields.
+    // GroupLayout - Layout that groups these specific widgets together
+    // searchField - JTextField
+    // browse - JButton
+    // filepathLabel - JLabel
+    JPanel textfieldPanel;
+    GroupLayout textGroupLayout; // layout to group these widgets together
+    JTextField searchField;
+    JButton browse;
+    JButton save;
+    JLabel filepathLabel;
 
-    JButton browse; // Browse specific files/folders.
-
-    // Text box
-    JLabel textAreaLabel;
-    JTextArea textArea;
-
-    // For compressor lz4
-    JTextArea compressTextArea;// Compressor Text Area
-    JLabel compressorLabel; // Default Compressor
-
-    
+    // Setting up starting and ending coords JTable and JTablePanel.
+    JPanel coordsPanel; // panel containing JTable
     JTable table;
     JScrollPane scrollPane;
-    
-    JLabel startCoordsLabel;
-    JLabel endCoordsLabel;
-
-    public String filepath;
-    public String compressor;
 
     // Starting and ending XYZ
-    public long startX=0, startY=0, startZ=0;
-    public long endX=0, endY=0, endZ=0;
+    public long startX, startY, startZ;
+    public long endX, endY, endZ;
 
-    // Default values for the chunk sizes.
-    public long chunkSizeX=256, chunkSizeY=256, chunkSizeZ=256;
-
-    public ImageStack imageStack;
-
-    public Object[] cImageObj;
-
-    public long bits;
-
-    JTable chunkTable; // Table to show Chunk Size XYZ. (Changeable)
+    // Chunk Table-related properties
+    JPanel chunkPanel;
+    JTable chunkTable;
     JScrollPane chunkScrollPane;
-    
-    JButton save; // save changes
 
-    public PWZGUI() {
+    public long chunkSizeX, chunkSizeY, chunkSizeZ;
+
+    // Compression labels and textFields and save JButton
+    JPanel compressorPanel;
+    GroupLayout compressorLayout;
+    JLabel compressorLabel;
+    JTextField compressorField;
+
+    String filepath;
+    String compressor;
+
+    ImageStack imageStack;
+    Object[] cImageObj;
+    long bits;
+
+
+    public PWZGUI(){
         filepath = "";
         compressor = "lz4"; // Default expected to be lz4. (Is changeable)
         imageStack = null;
@@ -62,28 +63,13 @@ public class PWZGUI implements ActionListener{
         endX = 0;
         endY = 0;
         endZ = 0;
-
-        // These default values are for the chunk sizes. That should remain as the default.
         chunkSizeX = 256;
         chunkSizeY = 256;
         chunkSizeZ = 256;
 
-        bits = 0;
-
-        // Creates a thread. Lets be called and execute object in its own instance.
-        // Basically like its own thread.
-        Runnable r = new Runnable() {
-            @Override
-            public void run(){
-                init();
-            }
-        };
-
-        // Swing GUIs should be created and updated on the EDT
-        // http://docs.oracle.com/javase/tutorial/uiswing/concurrency
-        SwingUtilities.invokeLater(r);
+        run();
     }
-
+    
     public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, long bits){
         this.filepath = filepath;
         this.compressor = compressor;
@@ -105,6 +91,10 @@ public class PWZGUI implements ActionListener{
 
         this.bits = bits;
 
+        run();
+    }
+
+    public void run(){
         // Creates a thread. Lets be called and execute object in its own instance.
         // Basically like its own thread.
         Runnable r = new Runnable(){
@@ -116,52 +106,101 @@ public class PWZGUI implements ActionListener{
 
         SwingUtilities.invokeLater(r);
     }
-    
+
     private void init(){
-        window = new JFrame("Write Zarr");
-        textAreaPanel = new JPanel(); // Main Panel
-        compressorLabel = new JLabel();
-        compressTextArea = new JTextArea();
+        setTitle("Write Zarr");
+        setSize(800, 600);
 
-        setupTextProperties(); // Handling button widget
-        grabCoordinates();
-        chunkAndCompressorProperties();
-        save(); // Save: What this does is submit the given changes, then close this specific interface.
-        show(); // Just adds in buttons to frame.
+        // Grab the primary monitor screen dimension
+        Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
 
-        window.setSize(600, 300);
-        window.setVisible(true);
+        // set the location of the frame to be in the center of the primary monitor
+        setLocation(screenSize.width/2 - getWidth()/2, screenSize.height/2 - getHeight()/2);
+
+        filepathProperties();
+        startingEndingCoords();
+        chunkProperties();
+
+        pack();
     }
 
-    // setting up text input properties.
-    private void setupTextProperties(){
+    private void filepathProperties(){
+        textfieldPanel = new JPanel();
+        textGroupLayout = new GroupLayout(textfieldPanel);
+        textfieldPanel.setLayout(textGroupLayout);
+
+        searchField = new JTextField(30);
         browse = new JButton("Browse");
-        browse.setBounds(300, 5, 15, 15);
+        save = new JButton("Save");
+        filepathLabel = new JLabel("Filepath");
+
         browse.addActionListener(this);
+        save.addActionListener(this);
 
-        // Handling text box and label
-        textAreaLabel = new JLabel("Filepath");
-        textAreaLabel.setBounds(125, 5, 90, 15);
+        
 
-        textArea = new JTextArea(1, 6);
-        textArea.setBounds(215, 5, 75, 25);
-        textArea.setLayout(new FlowLayout());
 
+        textGroupLayout.setAutoCreateGaps(true);
+        textGroupLayout.setAutoCreateContainerGaps(true);
+        
+        // Handles horizontally aligning are widgets and set the JPanel using GroupLayout to BorderLayout.NORTH
+        // sets the components grouped up together in the order we want them to be layed out.
+        textGroupLayout.setHorizontalGroup(textGroupLayout.createSequentialGroup()
+            .addComponent(filepathLabel)
+            .addComponent(searchField)
+            .addComponent(browse)
+            .addComponent(save)
+        );
+        
+        // Handles vertically aligning are widgets and set the JPanel using GroupLayout to BorderLayout.NORTH
+        textGroupLayout.setVerticalGroup(textGroupLayout.createParallelGroup()
+            .addComponent(filepathLabel)
+            .addComponent(searchField)
+            .addComponent(browse)
+            .addComponent(save)
+        );
+
+        getContentPane().add(textfieldPanel, BorderLayout.NORTH);
     }
-    
-    private void grabCoordinates(){
-        // Labels allowing the user using the interface to know
-        startCoordsLabel = new JLabel("Start");
-        endCoordsLabel = new JLabel("End");
 
-        startCoordsLabel.setBounds(140, 5, 150, 150);
-        endCoordsLabel.setBounds(145, 20, 150, 150);
+    private void startingEndingCoords(){
+        coordsPanel = new JPanel(new GridBagLayout());
+        scrollPane = new JScrollPane();
+        table = new JTable(10, 10);
 
-        Object[][] data = {
-            {startX, startY, startZ},
-            {endX, endY, endZ},
-        };
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.weightx = 1.0;
+        gbc.gridheight = 50;
+        gbc.gridwidth = 100;
+        gbc.fill = GridBagConstraints.HORIZONTAL; // This fills the interface with horizontally. Uncomment to see changes.
 
+        updateTable();
+
+        coordsPanel.add(scrollPane, gbc);
+        
+        add(coordsPanel, BorderLayout.CENTER);
+    }
+
+    private void chunkProperties(){
+        chunkPanel = new JPanel();
+        chunkPanel.setLayout(new BorderLayout());
+
+        compressorPanel = new JPanel();
+        compressorLayout = new GroupLayout(compressorPanel);
+        compressorPanel.setLayout(compressorLayout);
+
+        compressorLabel = new JLabel("Compressor");
+        compressorField = new JTextField(compressor);
+
+        chunkData();
+        compressorLayoutProperties();
+
+        chunkPanel.add(compressorPanel, BorderLayout.SOUTH);
+        add(chunkPanel, BorderLayout.SOUTH);
+    }
+
+
+    public void updateTable(){
         DefaultTableModel tableModel = new DefaultTableModel(){
             @Override
             public boolean isCellEditable(int row, int col) {
@@ -173,13 +212,20 @@ public class PWZGUI implements ActionListener{
         table = new JTable(tableModel);
         table.setBounds(235, 55, 115, 25);
 
+        Object[][] data1 = {{startX, startY, startZ, endX, endY, endZ}};
+
         // Adding columns to the table
-        tableModel.addColumn("X");
-        tableModel.addColumn("Y");
-        tableModel.addColumn("Z");
+        tableModel.addColumn("Start X");
+        tableModel.addColumn("Start Y");
+        tableModel.addColumn("Start Z");
+        tableModel.addColumn("End X");
+        tableModel.addColumn("End Y");
+        tableModel.addColumn("End Z");
+
 
         // Adding rows to the table.
-        for(int i = 0; i < data.length; i++) tableModel.addRow(data[i]);
+        for(int i = 0; i < data1.length; i++) tableModel.addRow(data1[i]);
+        
 
         scrollPane = new JScrollPane(table);
         scrollPane.setPreferredSize(new Dimension(250, 100)); // Actually setting how large the scroll pane is.
@@ -187,7 +233,7 @@ public class PWZGUI implements ActionListener{
         scrollPane.setVisible(true);
     }
 
-    private void chunkAndCompressorProperties(){
+    private void chunkData(){
         // Setting up JTable specifically for Chunk Size.
         Object[] data = {chunkSizeX, chunkSizeY, chunkSizeZ};
         DefaultTableModel model = new DefaultTableModel();
@@ -202,60 +248,38 @@ public class PWZGUI implements ActionListener{
         model.addRow(data);
 
         chunkScrollPane = new JScrollPane(chunkTable);
-        chunkScrollPane.setPreferredSize(new Dimension(200, 100)); // Actually setting how large the scroll pane is.
-        chunkScrollPane.setBounds(195, 125, 230, 53); // Set where we want the JTable to be located in the JFrame. (This line is what updates the X, Y coordinates of widget)
-        chunkScrollPane.setVisible(true);
-
-        compressorLabel.setText("Compressor: ");
-        compressorLabel.setBounds(180, 195, 130, 20); // NOTE FOR REF: Higher the Y-axis lower widgets are positioned. Higher X axis, more to right the widgets positioned at.
-        
-        compressTextArea.setText(compressor);
-        compressTextArea.setBounds(265,195, 65, 19);
+        chunkScrollPane.setPreferredSize(new Dimension(20, 90));
+        chunkScrollPane.setLocation(200, 250);
     }
 
-    // Function to help organize the widget that handles the saving changes button.
-    // When browsing this save button will update the text box.
-    private void save() {
-        save = new JButton("Save");
-        save.setBounds(175, 225, 115, 25);
-        save.addActionListener(this);
+    private void compressorLayoutProperties(){
+        compressorLayout.setAutoCreateGaps(true);
+        compressorLayout.setAutoCreateContainerGaps(true);
+
+        // Handling vertical and horizontally alignments in the windodw.
+        //horizontal alignment
+        compressorLayout.setHorizontalGroup(
+            compressorLayout.createSequentialGroup()
+                        .addComponent(chunkScrollPane)
+                        .addComponent(compressorLabel)
+                        .addComponent(compressorField)
+        );
+
+        //vertical alignment
+        compressorLayout.setVerticalGroup(
+            compressorLayout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                        .addComponent(chunkScrollPane)
+                        .addGap(20)
+                        .addComponent(compressorLabel)
+                        .addComponent(compressorField)
+        );
     }
 
     // Display error message window, if the file is not a zarr file.
     private void errorMessage(){
         String message = "File must be a zarr file";
-        JOptionPane.showMessageDialog(window, message);
-    }
-
-
-    private void show(){
-        // sets up text area box.
-        textAreaPanel.add(textAreaLabel);
-        textAreaPanel.add(textArea);
-        textAreaPanel.add(browse);
-        textAreaPanel.setSize(50, 50);
-
-        // sets up widgets to interface.
-        window.add(startCoordsLabel);
-        window.add(endCoordsLabel);
-        window.add(scrollPane);
-        window.add(chunkScrollPane);
-        window.add(compressorLabel);
-        window.add(compressTextArea);
-        window.add(save);
-        window.add(textAreaPanel, BorderLayout.CENTER); // This is how the TextArea and Labels, are being centered to the TOP of the interface.
-
-        window.pack();
-        window.setLocation(new Point(900, 250)); // Hopefully puts the screen in the center of the monitor (vary depending on monitoring)
-        window.setVisible(true);
-    }
-
-    @Override
-    public void actionPerformed(ActionEvent e){
-
-        if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.        
-        if(e.getSource() == save) submit(); // Updates the changes to interface.
-
+        JOptionPane.showMessageDialog(this, message);
+        return;
     }
 
     // Load new/selected file.
@@ -266,13 +290,12 @@ public class PWZGUI implements ActionListener{
         File file = null;
 
         int returnValue = chooser.showDialog(null, "Save");
-
         if(returnValue == JFileChooser.APPROVE_OPTION) file = chooser.getSelectedFile();
         
         if(file == null) return;
 
         this.filepath = file.getPath();
-        textArea.setText(this.filepath); // updates text area.
+        searchField.setText(this.filepath); // updates text area.
     }
 
     // Function for handling file extensions.
@@ -289,7 +312,10 @@ public class PWZGUI implements ActionListener{
 
     // "Submit" changes when "Save" clicked then updates interface.
     private void submit(){
-        if(!checkExtension(this.filepath) && !checkExtension(textArea.getText())) errorMessage(); // Checks if the file is a zarr file before we save and update
+        if(!checkExtension(this.filepath) && !checkExtension(searchField.getText())) {
+            errorMessage(); // Checks if the file is a zarr file before we save and update
+            return; // Do not want to continue so leave function. (OutofBounds error will occur, if this does not leave function call)
+        }
 
         // Manually adding inputs into the charts. Maybe a better way, but for now.
         startX = (long) table.getModel().getValueAt(0, 0);
@@ -308,5 +334,11 @@ public class PWZGUI implements ActionListener{
         PWZC pwzc = new PWZC();
         
         pwzc.parallelWriteZarr(filepath, cImageObj, startX, startY, startZ, endX, endY, endZ, chunkSizeX, chunkSizeY, chunkSizeZ, 1, compressor, 1, bits);
+    }
+    
+    @Override
+    public void actionPerformed(ActionEvent e){
+        if(e.getSource() == browse) loadfile(); // We want to check if the checkbox is clicked before we compress that file.        
+        if(e.getSource() == save) submit(); // Updates the changes to interface.
     }
 }
