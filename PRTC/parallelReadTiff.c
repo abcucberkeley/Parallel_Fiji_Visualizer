@@ -300,11 +300,14 @@ uint8_t isImageJIm(const char* fileName){
 	if(TIFFGetField(tif, TIFFTAG_IMAGEDESCRIPTION, &tiffDesc)){
 		if(strstr(tiffDesc, "ImageJ")){
 			if(TIFFGetField(tif, TIFFTAG_SOFTWARE, &software)){
+				TIFFClose(tif);
 				if(strstr(software,"Bio-Formats")) return 0;
 			}
+			TIFFClose(tif);
 			return 1;
 		}
 	}
+	TIFFClose(tif);
 	return 0;
 }
 
@@ -318,10 +321,12 @@ uint64_t imageJImGetZ(const char* fileName){
 			if(nZ){
 				nZ+=7;
 				char* temp;
+				TIFFClose(tif);
 				return strtol(nZ,&temp,10);
 			}
 		}
 	}
+	TIFFClose(tif);
 	return 0;
 }
 
