@@ -1,1 +1,1 @@
-gcc -fopenmp -fPIC -DPIC PRTC.c parallelReadTiff.c mallocDynamic.c -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Users\mrmmu\Desktop\ptrFijiPlugin\tiff\include" -L"C:\Users\mrmmu\Desktop\ptrFijiPlugin\tiff\lib" -shared -static -o libpReadTiffC.dll -ltiff
+gcc -fopenmp -fPIC -DPIC PRTC.c parallelReadTiff.c -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Program Files (x86)\tiff\include" -L"C:\Program Files (x86)\tiff\lib" -shared -static -o pReadTiffC.dll -ltiff
