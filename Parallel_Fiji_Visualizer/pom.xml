@@ -29,8 +29,8 @@
 	<artifactId>Parallel_Fiji_Visualizer</artifactId> <!-- FIXME: Your project artifactId here   -->
 	<version>1.0.0</version>
 
-	<name>Parallel Read Tiff</name>                                               <!-- FIXME: Your project name here          -->
-	<description>A parallel tiff reader for ImageJ</description> <!-- FIXME: Your project description here   -->
+	<name>Parallel Fiji Visualizer</name>                                               <!-- FIXME: Your project name here          -->
+	<description>A parallel Tiff/Zarr reader for ImageJ</description> <!-- FIXME: Your project description here   -->
 	<url>https://github.com/abcucberkeley/Parallel_Fiji_Visualizer</url>                   <!-- FIXME: Your project website here       -->
 	<inceptionYear>2022</inceptionYear>                                        <!-- FIXME: Your project starting year here -->
 	<organization>

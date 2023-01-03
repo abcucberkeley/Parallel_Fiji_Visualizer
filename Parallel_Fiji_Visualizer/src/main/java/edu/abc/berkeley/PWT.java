@@ -24,6 +24,15 @@ public class PWT {
 		}
 		if(f == null) return;
 		String fileName = f.getPath();
+		// Clean filename in case users didn't name it correctly
+		if(!fileName.endsWith(".tif")) {
+			// If the user didn't do the extension correctly then cut it off
+			if(fileName.contains(".")) {
+				fileName = fileName.substring(0, fileName.indexOf("."));
+			}
+			fileName = fileName.concat(".tif");
+		}
+		
 		ImagePlus cImagePlus = IJ.getImage();
 		if(cImagePlus == null) {
 			IJ.log("No current image to save");
