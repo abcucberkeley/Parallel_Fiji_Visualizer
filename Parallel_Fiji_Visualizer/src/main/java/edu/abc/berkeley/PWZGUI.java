@@ -11,11 +11,13 @@ import java.awt.event.ActionEvent;
 import java.io.File;
 
 public class PWZGUI extends JFrame implements ActionListener{
-    // Panel contains three fields.
-    // GroupLayout - Layout that groups these specific widgets together
-    // searchField - JTextField
-    // browse - JButton
-    // filepathLabel - JLabel
+    /*
+     Panel contains three fields.
+     GroupLayout - Layout that groups these specific widgets together
+     searchField - JTextField
+     browse - JButton
+     filepathLabel - JLabel
+    */
     JPanel textfieldPanel;
     GroupLayout textGroupLayout; // layout to group these widgets together
     JTextField searchField;
@@ -43,7 +45,7 @@ public class PWZGUI extends JFrame implements ActionListener{
     JPanel compressorPanel;
     GroupLayout compressorLayout;
     JLabel compressorLabel;
-    JTextField compressorField;
+    JComboBox compressorComboBox;
 
     String filepath;
     String compressor;
@@ -55,7 +57,7 @@ public class PWZGUI extends JFrame implements ActionListener{
 
     public PWZGUI(){
         filepath = "";
-        compressor = "lz4"; // Default expected to be lz4. (Is changeable)
+        compressor = "lz4"; // Default expected to be lz4. (Can be modiefied)
         imageStack = null;
         startX = 0;
         startY = 0;
@@ -67,7 +69,7 @@ public class PWZGUI extends JFrame implements ActionListener{
         chunkSizeY = 256;
         chunkSizeZ = 256;
 
-        run();
+        initialize();
     }
     
     public PWZGUI(String filepath, ImageStack imageStack, long startX, long startY, long startZ, long endX, long endY, long endZ, long chunkSizeX, long chunkSizeY, long chunkSizeZ, String compressor, long bits){
@@ -91,23 +93,25 @@ public class PWZGUI extends JFrame implements ActionListener{
 
         this.bits = bits;
 
-        run();
+        initialize();
     }
 
-    public void run(){
+    // This helps us create one instance to run the interface and call in each of the constructor
+    // Rather then having the same runnable in both, we create a function to call once to initialize the itnerface
+    public void initialize(){
         // Creates a thread. Lets be called and execute object in its own instance.
         // Basically like its own thread.
         Runnable r = new Runnable(){
             @Override
             public void run(){
-                init();
+                setup();
             }
         };
 
         SwingUtilities.invokeLater(r);
     }
 
-    private void init(){
+    private void setup(){
         setTitle("Write Zarr");
         setSize(800, 600);
 
@@ -136,9 +140,6 @@ public class PWZGUI extends JFrame implements ActionListener{
 
         browse.addActionListener(this);
         save.addActionListener(this);
-
-        
-
 
         textGroupLayout.setAutoCreateGaps(true);
         textGroupLayout.setAutoCreateContainerGaps(true);
@@ -174,7 +175,7 @@ public class PWZGUI extends JFrame implements ActionListener{
         gbc.gridwidth = 100;
         gbc.fill = GridBagConstraints.HORIZONTAL; // This fills the interface with horizontally. Uncomment to see changes.
 
-        updateTable();
+        update(); // update table
 
         coordsPanel.add(scrollPane, gbc);
         
@@ -190,7 +191,9 @@ public class PWZGUI extends JFrame implements ActionListener{
         compressorPanel.setLayout(compressorLayout);
 
         compressorLabel = new JLabel("Compressor");
-        compressorField = new JTextField(compressor);
+
+        String[] options = {"lz4", "zstd", "blosclz", "lz4hc", "zlib", "gzip"}; // dropdown menu options important to less important
+        compressorComboBox = new JComboBox<String>(options);
 
         chunkData();
         compressorLayoutProperties();
@@ -200,7 +203,8 @@ public class PWZGUI extends JFrame implements ActionListener{
     }
 
 
-    public void updateTable(){
+    // Update table
+    public void update(){
         DefaultTableModel tableModel = new DefaultTableModel(){
             @Override
             public boolean isCellEditable(int row, int col) {
@@ -256,13 +260,14 @@ public class PWZGUI extends JFrame implements ActionListener{
         compressorLayout.setAutoCreateGaps(true);
         compressorLayout.setAutoCreateContainerGaps(true);
 
+
         // Handling vertical and horizontally alignments in the windodw.
         //horizontal alignment
         compressorLayout.setHorizontalGroup(
             compressorLayout.createSequentialGroup()
                         .addComponent(chunkScrollPane)
                         .addComponent(compressorLabel)
-                        .addComponent(compressorField)
+                        .addComponent(compressorComboBox)
         );
 
         //vertical alignment
@@ -271,7 +276,7 @@ public class PWZGUI extends JFrame implements ActionListener{
                         .addComponent(chunkScrollPane)
                         .addGap(20)
                         .addComponent(compressorLabel)
-                        .addComponent(compressorField)
+                        .addComponent(compressorComboBox) // dropdown menu with options
         );
     }
 
@@ -298,7 +303,7 @@ public class PWZGUI extends JFrame implements ActionListener{
         searchField.setText(this.filepath); // updates text area.
     }
 
-    // Function for handling file extensions.
+    // helper function to check if file extension has .zarr
     private boolean checkExtension(String path){
         String extension = "";
         int i = path.lastIndexOf('.');
