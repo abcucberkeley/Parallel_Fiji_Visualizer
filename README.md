@@ -1,5 +1,5 @@
 # Parallel_Fiji_Visualizer
-An effiecient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
+An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 
 ## Quick Start Guide
 
