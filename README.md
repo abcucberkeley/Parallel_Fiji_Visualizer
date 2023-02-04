@@ -6,8 +6,10 @@ An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 ### Prerequisites
 1. An up to date installation of Fiji which can be downloaded from here: https://imagej.net/software/fiji/downloads
 
+2. OS versions tested: Windows 10, Ubuntu 22.04, macOS Ventura 13.0 (other OS versions may work as well)
+
 ### Download and Install
-1. Download the latest release for your OS from here (windows/linux.zip): https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases
+1. Download the latest release for your OS from here (windows/linux/mac.zip): https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases
 2. Unzip the folder
 3. You should now see two folders within the folder you just unzipped
 4. Copy the _lib folder to the lib/"os" folder in the root of your Fiji installion. Example on Windows: Fiji.app\lib\win64
