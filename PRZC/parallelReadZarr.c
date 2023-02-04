@@ -345,8 +345,8 @@ void parallelReadZarr(void* zarr, const char* folderName,uint64_t startX, uint64
 
 	/* Initialize the Blosc compressor */
 	int32_t numWorkers = omp_get_max_threads();
-	blosc_init();
-	blosc_set_nthreads(numWorkers);
+	blosc2_init();
+	blosc2_set_nthreads(numWorkers);
 
 	struct chunkInfo cI = getChunkInfo(folderName, startX, startY, startZ, endX, endY, endZ,chunkXSize,chunkYSize,chunkZSize);
 	if(!cI.chunkNames) printf("File \"%s\" cannot be opened",folderName);
@@ -535,7 +535,7 @@ void parallelReadZarr(void* zarr, const char* folderName,uint64_t startX, uint64
 	free(cI.chunkNames);
 
 	/* After using it, destroy the Blosc environment */
-	blosc_destroy();
+	blosc2_destroy();
 
 	if(err) printf("%s",errString);
 }

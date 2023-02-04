@@ -220,11 +220,10 @@ void readTiffParallel2D(uint64_t x, uint64_t y, uint64_t z, const char* fileName
 
 // Reading images saved by ImageJ
 void readTiffParallelImageJ(uint64_t x, uint64_t y, uint64_t z, const char* fileName, void* tiff, uint64_t bits, uint64_t startSlice, uint64_t stripSize, uint8_t flipXY){
-	#ifdef __linux__
-	int fd = open(fileName,O_RDONLY);
-	#endif
 	#ifdef _WIN32
 	int fd = open(fileName,O_RDONLY | O_BINARY);
+	#else
+	int fd = open(fileName,O_RDONLY);
 	#endif
 	TIFF* tif = TIFFOpen(fileName, "r");
 	uint64_t offset = 0;

@@ -10,11 +10,10 @@
 #include <blosc.h>
 #include <cjson/cJSON.h>
 #include <omp.h>
-#ifdef __linux__
-#include <uuid/uuid.h>
-#endif
 #ifdef _WIN32
 #include <sys/time.h>
+#else
+#include <uuid/uuid.h>
 #endif
 #include <sys/stat.h>
 
@@ -60,13 +59,6 @@ void parallelWriteZarr(void* zarr, char* folderName,uint64_t startX, uint64_t st
 	uint64_t zRest = 0;
 
 	uint64_t uuidLen;
-	#ifdef __linux__
-	uuidLen = 36;
-	uuid_t binuuid;
-	uuid_generate_random(binuuid);
-	char *uuid = malloc(uuidLen+1);
-	uuid_unparse(binuuid, uuid);
-	#endif
 	#ifdef _WIN32
 	uuidLen = 5;
 	char *uuid = malloc(uuidLen+1);
@@ -81,6 +73,12 @@ void parallelWriteZarr(void* zarr, char* folderName,uint64_t startX, uint64_t st
 	else aSeed = strtol(seedArr, &ptr, 9);
 	srand(aSeed);
 	sprintf(uuid,"%.5d",rand() % 99999);
+	#else
+	uuidLen = 36;
+	uuid_t binuuid;
+	uuid_generate_random(binuuid);
+	char *uuid = malloc(uuidLen+1);
+	uuid_unparse(binuuid, uuid);
 	#endif
 	int err = 0;
 	char errString[10000];

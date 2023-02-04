@@ -1,0 +1,1 @@
+/usr/local/bin/gcc-12 -O3 -fopenmp -fPIC -DPIC PWZC.c parallelWriteZarr.c helperFunctions.c parallelReadZarr.c -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include/darwin -I/usr/local/include -L/usr/local/lib -shared -o libpReadZarrC.dylib -luuid -lblosc2 -lblosc -lcjson -lz

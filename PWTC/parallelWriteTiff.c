@@ -21,11 +21,10 @@ static void mkdirRecursive(const char *dir) {
 	char tmp[8192];
 	char *p = NULL;
 	size_t len;
-	#ifdef __linux__
-	char fileSep = '/';
-	#endif
 	#ifdef _WIN32
 	char fileSep = '\\';
+	#else
+	char fileSep = '/';
 	#endif
 	//int status;
 	snprintf(tmp, sizeof(tmp),"%s",dir);
