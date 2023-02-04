@@ -9,6 +9,8 @@
 package edu.abc.berkeley;
 
 import ij.ImageJ;
+import ij.ImagePlus;
+import ij.io.Opener;
 import ij.plugin.PlugIn;
 
 
@@ -45,12 +47,13 @@ public class ParallelFijiVisualizer implements PlugIn {
      */
 
 	public static void main(final String... args) throws Exception {
+		//ImagePlus imp = (new Opener()).openImage("/clusterfs/nvme/sayan/latticeSIM/DS/GPUsirecon/RAW_exp01_CamA_ch0_CAM1_stack0000_488nm_0000000msec_0019444262msecAbs_000x_000y_000z_0000t_recon.tif");
     	new ImageJ();
     	new ParallelFijiVisualizer().run("");
         //ij.ui().showUI();
         //PRZ test = new PRZ("/home/matt/Desktop/testImages/xrTest.zarr", 0, 0, 0, 1800, 512, 1, true);
         //if(true) return;
-        //ImagePlus imp = (new Opener()).openImage("/home/matt/Desktop/testImages/MIPs_run7.tif");
+        //ImagePlus imp = (new Opener()).openImage("/home/matt/Desktop/testImages/xrBad2DTest/Scan_Iter_0000_CamA_ch0_CAM1_stack0000_514nm_0000000msec_0018669589msecAbs_MIP_z.tif");
         //imp.show();
         //imp.
         //FileSaver fs = new FileSaver(imp);
