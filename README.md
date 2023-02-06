@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7613251.svg)](https://doi.org/10.5281/zenodo.7613251)
 # Parallel_Fiji_Visualizer
 An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 
@@ -15,3 +16,7 @@ An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 4. Copy the _lib folder to the lib/"os" folder in the root of your Fiji installion. Example on Windows: Fiji.app\lib\win64
 5. Copy the _plugin folder to the plugins folder in the root of your Fiji installation. Example on Windows: Fiji.app\plugins
 6. Now launch a new session of Fiji and you should be able to see the plugin under the Plugins tab! (You can also search for "Parallel Fiji Visualizer" in the search bar)
+
+Please cite our software if you find it useful in your work:
+
+Matthew Mueller, Xiongtao Ruan#, Eric Betzig, & Srigokul Upadhyayula#. (2023). Fast Fiji Visualization Tools for Tiff and Zarr (v1.1.0). Zenodo. https://doi.org/10.5281/zenodo.7613251 (# indicates corresponding author)
