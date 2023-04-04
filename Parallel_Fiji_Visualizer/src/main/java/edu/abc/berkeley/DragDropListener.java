@@ -62,11 +62,12 @@ class DragDropListener implements DropTargetListener {
                     		}
                     		continue;
                     	}
-                    	else if(!fName.endsWith(".tif")) {
+                    	// Check if the tiff extension is correct
+                    	else if(!(fName.endsWith(".tif") || fName.endsWith(".tiff"))) {
                     		// Check if Windows destroyed the name because it can't handle paths greater than 256 chars
                     		// the contains function doesn't work so I have to do this. It's a Windows thing I suppose
                     		if(!SystemUtils.IS_OS_WINDOWS || fName.length() < 4 || StringUtils.difference(fName.substring(fName.length()-4),".TIF") != "") {
-                    			IJ.log(fName + " does not contain the .tif or .zarr extension.");
+                    			IJ.log(fName + " does not contain the .tif/.tiff or .zarr extension.");
                     			continue;
                     		}
                     	}

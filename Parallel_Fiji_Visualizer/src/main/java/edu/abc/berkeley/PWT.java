@@ -25,7 +25,8 @@ public class PWT {
 		if(f == null) return;
 		String fileName = f.getPath();
 		// Clean filename in case users didn't name it correctly
-		if(!fileName.endsWith(".tif")) {
+		// Check if the tiff extension is correct
+		if(!(fileName.endsWith(".tif") || fileName.endsWith(".tiff"))) {
 			// If the user didn't do the extension correctly then cut it off
 			if(fileName.contains(".")) {
 				fileName = fileName.substring(0, fileName.indexOf("."));

@@ -27,7 +27,7 @@
 
 	<groupId>edu.abc.berkeley</groupId>        <!-- FIXME: Your organization groupId here -->
 	<artifactId>Parallel_Fiji_Visualizer</artifactId> <!-- FIXME: Your project artifactId here   -->
-	<version>1.0.0</version>
+	<version>1.1.1</version>
 
 	<name>Parallel Fiji Visualizer</name>                                               <!-- FIXME: Your project name here          -->
 	<description>A parallel Tiff/Zarr reader for ImageJ</description> <!-- FIXME: Your project description here   -->
