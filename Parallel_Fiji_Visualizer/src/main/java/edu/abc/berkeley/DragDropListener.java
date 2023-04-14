@@ -19,7 +19,16 @@ import java.awt.dnd.DropTargetEvent;
 import java.awt.dnd.DropTargetListener;
 import java.io.File;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 class DragDropListener implements DropTargetListener {
+	
+	private boolean isReadable(String filePath) {
+        Path path = Paths.get(filePath);
+        return Files.isReadable(path);
+	}
 
     @Override
     public void drop(DropTargetDropEvent event) {
@@ -47,6 +56,11 @@ class DragDropListener implements DropTargetListener {
                     // Loop them through
                     for (File file : files) {
                     	String fName = file.getPath();
+                    	if(!isReadable(fName)) {
+                    		if(file.isDirectory()) IJ.log("Permission Denied for folder:\"" + fName + "\". Please check your permissions.");
+                    		else IJ.log("Permission Denied for file:\"" + fName + "\". Please check your permissions.");
+                			continue;
+                    	}
                     	
                     	if (file.isDirectory()) {
                     		if(fName.endsWith(".zarr")) {
@@ -71,6 +85,7 @@ class DragDropListener implements DropTargetListener {
                     			continue;
                     		}
                     	}
+                    	
                     	if (file.isFile()) new Thread(() -> {
                     		new PRT(fName);
                     	}).start();
