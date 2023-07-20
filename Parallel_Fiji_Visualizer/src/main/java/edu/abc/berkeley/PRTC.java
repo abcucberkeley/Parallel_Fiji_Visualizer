@@ -4,14 +4,16 @@ import java.nio.ByteBuffer;
 
 import org.apache.commons.lang.SystemUtils;
 
+
 public class PRTC {
     // Load system libraries
-    static {
+    static { 	
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		System.loadLibrary("zlib");
-    		System.loadLibrary("tiff");
+        	helperFunctions.loadLib("libzlib");
+        	helperFunctions.loadLib("libtiff");
+
     	}
-        System.loadLibrary("pReadTiffC");
+    	helperFunctions.loadLib("pReadTiffC");
     }
     
     // Declare native method

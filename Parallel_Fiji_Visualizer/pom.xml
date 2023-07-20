@@ -21,7 +21,7 @@
     <parent>
 		<groupId>org.scijava</groupId>
 		<artifactId>pom-scijava</artifactId>
-		<version>31.1.0</version>  <!-- Testing - Old: 31.1.0 -->
+		<version>36.0.0</version>  <!-- Testing - Old: 31.1.0 -->
 		<relativePath/>
 	</parent>
 

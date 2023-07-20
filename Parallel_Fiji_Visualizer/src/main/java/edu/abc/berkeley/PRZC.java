@@ -6,14 +6,14 @@ public class PRZC {
     // Load system libraries
     static {
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		System.loadLibrary("zlib");
-    		System.loadLibrary("libblosc2");
+    		helperFunctions.loadLib("libzlib");
+    		helperFunctions.loadLib("libblosc2");
     	}
-		System.loadLibrary("cjson");
+    	helperFunctions.loadLib("cjson");
 		if(!SystemUtils.IS_OS_WINDOWS) {
-			System.loadLibrary("blosc2");
+			helperFunctions.loadLib("blosc2");
 		}
-        System.loadLibrary("pReadZarrC");
+		helperFunctions.loadLib("pReadZarrC");
     }
     
     // Declare native method

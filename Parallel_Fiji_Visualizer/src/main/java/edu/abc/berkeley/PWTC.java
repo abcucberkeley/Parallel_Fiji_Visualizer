@@ -6,9 +6,9 @@ public class PWTC {
     // Load system libraries
     static {
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		System.loadLibrary("tiff");
+    		helperFunctions.loadLib("libtiff");
     	}
-        System.loadLibrary("pWriteTiffC");
+        helperFunctions.loadLib("pWriteTiffC");
     }
     
     // Declare native method
