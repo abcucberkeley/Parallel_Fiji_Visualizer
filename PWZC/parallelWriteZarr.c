@@ -412,11 +412,10 @@ void writeZarrParallelHelper(char* folderName, void* zarr, uint64_t startX, uint
 		FILE* f = fopen(fnFull,"r");
 		if(f) fclose(f);
 		else{
-			#ifdef __linux__
-			mkdir(folderName, 0775);
-			#endif
 			#ifdef _WIN32
-			mkdir(folderName);
+            mkdir(folderName);
+            #else
+            mkdir(folderName, 0775);
 			#endif
 			chmod(folderName, 0775);
 		}
@@ -433,13 +432,12 @@ void writeZarrParallelHelper(char* folderName, void* zarr, uint64_t startX, uint
 
 		FILE* f = fopen(fnFull,"r");
 		if(f) fclose(f);
-		else {
-			#ifdef __linux__
-			mkdir(folderName, 0775);
-			#endif
-			#ifdef _WIN32
-			mkdir(folderName);
-			#endif
+        else {
+            #ifdef _WIN32
+            mkdir(folderName);
+            #else
+            mkdir(folderName, 0775);
+            #endif
 			chmod(folderName, 0775);
 			setJSONValues(folderName,&chunkXSize,&chunkYSize,&chunkZSize,dtype,&order,&shapeX,&shapeY, &shapeZ,cname);
 		}

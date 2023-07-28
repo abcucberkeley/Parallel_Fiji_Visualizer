@@ -13,7 +13,7 @@ public class PRTC {
         	helperFunctions.loadLib("libtiff");
 
     	}
-    	helperFunctions.loadLib("pReadTiffC");
+    	helperFunctions.loadLib("libpReadTiffC");
     }
     
     // Declare native method

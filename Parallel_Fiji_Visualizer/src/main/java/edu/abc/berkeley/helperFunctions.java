@@ -7,10 +7,14 @@ import ij.IJ;
 public class helperFunctions {
     public static void loadLib(String libName) {
 		String jLP = System.getProperty("java.library.path");
-		String[] paths = jLP.split(";");
+		String delim = ";";
+		if(SystemUtils.IS_OS_MAC) {
+			delim = ":";
+		}
+		String[] paths = jLP.split(delim);
 		String pathToLib = "";
 		for(String path : paths) {
-			if(path.contains("Fiji.app/lib") && !path.contains("Parallel_Fiji_Visualizer_lib")) {
+			if((path.contains("/lib/")) && !path.contains("Parallel_Fiji_Visualizer_lib")) {
 				pathToLib = path;
 				break;
 			}

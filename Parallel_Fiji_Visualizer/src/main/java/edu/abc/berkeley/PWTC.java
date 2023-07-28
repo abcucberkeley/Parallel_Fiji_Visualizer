@@ -8,7 +8,7 @@ public class PWTC {
     	if(SystemUtils.IS_OS_WINDOWS) {
     		helperFunctions.loadLib("libtiff");
     	}
-        helperFunctions.loadLib("pWriteTiffC");
+        helperFunctions.loadLib("libpWriteTiffC");
     }
     
     // Declare native method

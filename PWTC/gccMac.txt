@@ -1,1 +1,4 @@
 /usr/local/bin/gcc-12 -O3 -fopenmp -fPIC -DPIC PWTC.c parallelWriteTiff.c lzwEncode.c -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include/darwin -I/usr/local/include -L/usr/local/lib -shared -o libpWriteTiffC.dylib -ltiff
+
+STATIC:
+/usr/local/bin/gcc-13 -O3 -fopenmp -fPIC -DPIC PWTC.c parallelWriteTiff.c lzwEncode.c -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include -I/Library/Java/JavaVirtualMachines/jdk-19.jdk/Contents/Home/include/darwin -I/usr/local/include -L/usr/local/lib -shared -o libpWriteTiffC.dylib /usr/local/lib/libtiff.a /usr/local/lib/libzstd.a /usr/local/lib/liblzma.a /usr/local/lib/libdeflate.a /usr/local/Cellar/zlib/1.2.13/lib/libz.a /usr/local/opt/gcc/lib/gcc/current/libgomp.a -static-libgcc -static-libstdc++

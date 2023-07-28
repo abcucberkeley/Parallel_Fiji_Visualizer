@@ -8,12 +8,13 @@ public class PRZC {
     	if(SystemUtils.IS_OS_WINDOWS) {
     		helperFunctions.loadLib("libzlib");
     		helperFunctions.loadLib("libblosc2");
+    		helperFunctions.loadLib("cjson");
     	}
-    	helperFunctions.loadLib("cjson");
-		if(!SystemUtils.IS_OS_WINDOWS) {
-			helperFunctions.loadLib("blosc2");
-		}
-		helperFunctions.loadLib("pReadZarrC");
+    	
+		//if(!SystemUtils.IS_OS_WINDOWS) {
+		//	helperFunctions.loadLib("blosc2");
+		//}
+		helperFunctions.loadLib("libpReadZarrC");
     }
     
     // Declare native method
