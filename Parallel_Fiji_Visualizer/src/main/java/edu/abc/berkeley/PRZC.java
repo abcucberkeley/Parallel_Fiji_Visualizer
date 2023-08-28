@@ -14,7 +14,10 @@ public class PRZC {
 		//if(!SystemUtils.IS_OS_WINDOWS) {
 		//	helperFunctions.loadLib("blosc2");
 		//}
+    	//helperFunctions.loadLib("libcppZarr");
 		helperFunctions.loadLib("libpReadZarrC");
+    	//System.loadLibrary("cppZarr");
+		//System.loadLibrary("pReadZarrC");
     }
     
     // Declare native method

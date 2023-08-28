@@ -8,13 +8,14 @@ public class helperFunctions {
     public static void loadLib(String libName) {
 		String jLP = System.getProperty("java.library.path");
 		String delim = ";";
-		if(SystemUtils.IS_OS_MAC) {
+
+		if(SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
 			delim = ":";
 		}
 		String[] paths = jLP.split(delim);
 		String pathToLib = "";
 		for(String path : paths) {
-			if((path.contains("/lib/")) && !path.contains("Parallel_Fiji_Visualizer_lib")) {
+			if((path.contains("/Parallel_Fiji_Visualizer_lib"))) {
 				pathToLib = path;
 				break;
 			}
@@ -32,7 +33,11 @@ public class helperFunctions {
 		else {
 			IJ.log("Could not determine OS when loading lib: "+libName+"\n");
 		}
-		System.load(pathToLib+"/Parallel_Fiji_Visualizer_lib/"+libName+ext);
+		if(!pathToLib.contains("Parallel_Fiji_Visualizer_lib")) {
+			pathToLib = pathToLib+"/Parallel_Fiji_Visualizer_lib";
+		}
+		pathToLib = pathToLib+"/";
+		System.load(pathToLib+libName+ext);
 	}
 
 }

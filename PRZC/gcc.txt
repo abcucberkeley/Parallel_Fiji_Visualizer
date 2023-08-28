@@ -1,1 +1,4 @@
 gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRZC.c parallelReadZarr.c -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -I/home/matt/Desktop/ptrFijiPlugin/PRZC/cBlosc2/include -I/home/matt/Desktop/ptrFijiPlugin/PRZC/cJSON/include -L/home/matt/Desktop/ptrFijiPlugin/PRZC/cBlosc2/lib -L /home/matt/Desktop/ptrFijiPlugin/PRZC/cJSON/lib -shared -o libpReadZarrC.so -lblosc2 -lcjson -lz
+
+cpp-zarr:
+g++ -fopenmp -O3 -DNDEBUG -fPIC -DPIC -Wl,-rpath='$ORIGIN' PRZC.cpp -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -I/usr/local/include -L/usr/local/lib -shared -o libpReadZarrC.so -lcppZarr

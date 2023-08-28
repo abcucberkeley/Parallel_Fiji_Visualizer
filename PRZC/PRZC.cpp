@@ -2,36 +2,37 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <limits.h>
-#include <omp.h>
-#include "parallelReadZarr.h"
+#include <cstdlib>
+#include <iostream>
+#include "parallelreadzarr.h"
+#include "zarr.h"
 #include "edu_abc_berkeley_PRZC.h"
 
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
-	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
+	const char* fName = env->GetStringUTFChars(fileName, NULL);
 	uint8_t* arrP = (uint8_t*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
 	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
-	(*env)->ReleaseStringUTFChars(env,fileName, fName);
+	env->ReleaseStringUTFChars(fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
 	uint64_t arrSize = zSize*arrDims[2];
 	
 	// Get the char array class
-	jclass cls = (*env)->FindClass(env,"[B");
+	jclass cls = env->FindClass("[B");
 
-	jcharArray iniVal = (*env)->NewByteArray(env,arrDims[2]);
+	jbyteArray iniVal = env->NewByteArray(arrDims[2]);
 
 	// Main Array to be returned
-	jobjectArray outer = (*env)->NewObjectArray(env,arrDims[2], cls, iniVal);
-	(*env)->DeleteLocalRef(env,iniVal);
-	(*env)->DeleteLocalRef(env,cls);
+	jobjectArray outer = env->NewObjectArray(arrDims[2], cls, iniVal);
+    env->DeleteLocalRef(iniVal);
+	env->DeleteLocalRef(cls);
 
 	for(uint64_t i = 0; i < arrDims[2]; i++){
-		jcharArray inner = (*env)->NewByteArray(env,zSize);
+		jbyteArray inner = env->NewByteArray(zSize);
 		if(zSize <= INT_MAX/2){
-			(*env)->SetByteArrayRegion(env,inner, 0, zSize, arrP+(i*zSize));
+			env->SetByteArrayRegion(inner, 0, zSize, (int8_t*)arrP+(i*zSize));
 		}
 		else{
 			//ImageJ can only do half of INTMAX into a region at a time maybe?
@@ -39,12 +40,12 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 
 			int32_t cSize = batchSize;
 			for(int j = 0; j < 3; j++){
 				if((j+1)*batchSize > zSize) cSize = zSize-(j*batchSize);
-				(*env)->SetByteArrayRegion(env,inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
+				env->SetByteArrayRegion(inner, j*batchSize, cSize, (int8_t*)arrP+(i*zSize)+(j*batchSize));
 			}
 		}
 
-		(*env)->SetObjectArrayElement(env, outer, i, inner);
-		(*env)->DeleteLocalRef(env,inner);
+		env->SetObjectArrayElement(outer, i, inner);
+		env->DeleteLocalRef(inner);
 
 	}
 	free(arrP);
@@ -53,28 +54,29 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16 (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
-	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
+	const char* fName = env->GetStringUTFChars(fileName, NULL);
 	uint16_t* arrP = (uint16_t*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
 	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
-	(*env)->ReleaseStringUTFChars(env,fileName, fName);
+	env->ReleaseStringUTFChars(fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
 	uint64_t arrSize = zSize*arrDims[2];
+	//for(int i = 0; i < arrSize; i++) std::cout << arrP[i] << std::endl;
 	
 	// Get the short array class
-	jclass cls = (*env)->FindClass(env,"[S");
+	jclass cls = env->FindClass("[S");
 
-	jshortArray iniVal = (*env)->NewShortArray(env,arrDims[2]);
+	jshortArray iniVal = env->NewShortArray(arrDims[2]);
 
 	// Main Array to be returned
-	jobjectArray outer = (*env)->NewObjectArray(env,arrDims[2], cls, iniVal);
-	(*env)->DeleteLocalRef(env,iniVal);
-	(*env)->DeleteLocalRef(env,cls);
+	jobjectArray outer = env->NewObjectArray(arrDims[2], cls, iniVal);
+	env->DeleteLocalRef(iniVal);
+	env->DeleteLocalRef(cls);
 
 	for(uint64_t i = 0; i < arrDims[2]; i++){
-		jshortArray inner = (*env)->NewShortArray(env,zSize);
+		jshortArray inner = env->NewShortArray(zSize);
 		if(zSize <= INT_MAX/2){
-			(*env)->SetShortArrayRegion(env,inner, 0, zSize, arrP+(i*zSize));
+			env->SetShortArrayRegion(inner, 0, zSize, (int16_t*)arrP+(i*zSize));
 		}
 		else{
 			//ImageJ can only do half of INTMAX into a region at a time maybe?
@@ -82,11 +84,11 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16
 			int32_t cSize = batchSize;
 			for(int j = 0; j < 3; j++){
 				if((j+1)*batchSize > zSize) cSize = zSize-(j*batchSize);
-				(*env)->SetShortArrayRegion(env,inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
+				env->SetShortArrayRegion(inner, j*batchSize, cSize, (int16_t*)arrP+(i*zSize)+(j*batchSize));
 			}
 		}
-		(*env)->SetObjectArrayElement(env, outer, i, inner);
-		(*env)->DeleteLocalRef(env,inner);
+		env->SetObjectArrayElement(outer, i, inner);
+		env->DeleteLocalRef(inner);
 
 	}
 	free(arrP);
@@ -96,28 +98,28 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT16
 
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
-	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
+	const char* fName = env->GetStringUTFChars(fileName, NULL);
 	float* arrP = (float*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
 	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
-	(*env)->ReleaseStringUTFChars(env,fileName, fName);
+	env->ReleaseStringUTFChars(fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
 	uint64_t arrSize = zSize*arrDims[2];
 	// Get the float array class
-	jclass cls = (*env)->FindClass(env,"[F");
+	jclass cls = env->FindClass("[F");
 
-	jfloatArray iniVal = (*env)->NewFloatArray(env,arrDims[2]);
+	jfloatArray iniVal = env->NewFloatArray(arrDims[2]);
 
 	// Main Array to be returned
-	jobjectArray outer = (*env)->NewObjectArray(env,arrDims[2], cls, iniVal);
-	(*env)->DeleteLocalRef(env,iniVal);
-	(*env)->DeleteLocalRef(env,cls);
+	jobjectArray outer = env->NewObjectArray(arrDims[2], cls, iniVal);
+	env->DeleteLocalRef(iniVal);
+	env->DeleteLocalRef(cls);
 
 
 	for(uint64_t i = 0; i < arrDims[2]; i++){
-		jfloatArray inner = (*env)->NewFloatArray(env,zSize);
+		jfloatArray inner = env->NewFloatArray(zSize);
 		if(zSize <= INT_MAX/2){
-			(*env)->SetFloatArrayRegion(env,inner, 0, zSize, arrP+(i*zSize));
+			env->SetFloatArrayRegion(inner, 0, zSize, arrP+(i*zSize));
 		}
 		else{
 			//ImageJ can only do half of INTMAX into a region at a time maybe?
@@ -125,12 +127,12 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT 
 			int32_t cSize = batchSize;
 			for(int j = 0; j < 3; j++){
 				if((j+1)*batchSize > zSize) cSize = zSize-(j*batchSize);
-				(*env)->SetFloatArrayRegion(env,inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
+				env->SetFloatArrayRegion(inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
 			}
 		}
 
-		(*env)->SetObjectArrayElement(env, outer, i, inner);
-		(*env)->DeleteLocalRef(env,inner);
+		env->SetObjectArrayElement( outer, i, inner);
+		env->DeleteLocalRef(inner);
 
 	}
 	free(arrP);
@@ -140,10 +142,10 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrFLOAT 
 
 // Image stack does not accept double so we convert to a float for now
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE (JNIEnv *env, jobject thisObj, jstring fileName, jlong startX, jlong startY, jlong startZ, jlong endX, jlong endY, jlong endZ){
-	const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
+	const char* fName = env->GetStringUTFChars(fileName, NULL);
 	double* arrPT = (double*)readZarrParallelHelper(fName,startX,startY,startZ,endX,endY,endZ,1);
 	uint64_t arrDims[3] = {endX-startX,endY-startY,endZ-startZ};
-	(*env)->ReleaseStringUTFChars(env,fileName, fName);
+	env->ReleaseStringUTFChars(fileName, fName);
 	
 	uint64_t zSize = arrDims[0]*arrDims[1];
 	uint64_t arrSize = zSize*arrDims[2];
@@ -158,19 +160,19 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE
 	free(arrPT);
 
 	// Get the float array class
-	jclass cls = (*env)->FindClass(env,"[F");
+	jclass cls = env->FindClass("[F");
 
-	jfloatArray iniVal = (*env)->NewFloatArray(env,arrDims[2]);
+	jfloatArray iniVal = env->NewFloatArray(arrDims[2]);
 
 	// Main Array to be returned
-	jobjectArray outer = (*env)->NewObjectArray(env,arrDims[2], cls, iniVal);
-	(*env)->DeleteLocalRef(env,iniVal);
-	(*env)->DeleteLocalRef(env,cls);
+	jobjectArray outer = env->NewObjectArray(arrDims[2], cls, iniVal);
+	env->DeleteLocalRef(iniVal);
+	env->DeleteLocalRef(cls);
 
 	for(uint64_t i = 0; i < arrDims[2]; i++){
-		jfloatArray inner = (*env)->NewFloatArray(env,zSize);
+		jfloatArray inner = env->NewFloatArray(zSize);
 		if(zSize <= INT_MAX/2){
-			(*env)->SetFloatArrayRegion(env,inner, 0, zSize, arrP+(i*zSize));
+			env->SetFloatArrayRegion(inner, 0, zSize, arrP+(i*zSize));
 		}
 		else{
 			//ImageJ can only do half of INTMAX into a region at a time maybe?
@@ -178,12 +180,12 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE
 			int32_t cSize = batchSize;
 			for(int j = 0; j < 3; j++){
 				if((j+1)*batchSize > zSize) cSize = zSize-(j*batchSize);
-				(*env)->SetFloatArrayRegion(env,inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
+				env->SetFloatArrayRegion(inner, j*batchSize, cSize, arrP+(i*zSize)+(j*batchSize));
 			}
 		}
 
-		(*env)->SetObjectArrayElement(env, outer, i, inner);
-		(*env)->DeleteLocalRef(env,inner);
+		env->SetObjectArrayElement( outer, i, inner);
+		env->DeleteLocalRef(inner);
 
 	}
 	free(arrP);
@@ -193,20 +195,21 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrDOUBLE
 
 JNIEXPORT jlong JNICALL Java_edu_abc_berkeley_PRZC_getDataType (JNIEnv *env, jobject thisObj, jstring fileName)
 {
-    const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-    uint64_t bits = getDataType(fName);
-    (*env)->ReleaseStringUTFChars(env,fileName, fName);
+    const char* fName = env->GetStringUTFChars(fileName, NULL);
+    zarr Zarr(fName);
+	uint64_t bits = Zarr.dtypeBytes()*8;
+    env->ReleaseStringUTFChars(fileName, fName);
     return bits;
 
 }
 
 JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_PRZC_getImageDims (JNIEnv *env, jobject thisObj, jstring fileName)
 {
-    const char* fName = (*env)->GetStringUTFChars(env,fileName, NULL);
-    uint64_t* dims = getImageSize(fName);
-    jlongArray rval = (*env)->NewLongArray(env,3);
-    (*env)->SetLongArrayRegion(env,rval,0,3,dims);
-    (*env)->ReleaseStringUTFChars(env,fileName, fName);
-	free(dims);
+    const char* fName = env->GetStringUTFChars(fileName, NULL);
+    zarr Zarr(fName);
+	uint64_t dims[3] = {Zarr.get_shape(0),Zarr.get_shape(1),Zarr.get_shape(2)};
+    jlongArray rval = env->NewLongArray(3);
+    env->SetLongArrayRegion(rval,0,3,(int64_t*)dims);
+    env->ReleaseStringUTFChars(fileName, fName);
     return rval;
 }
