@@ -1,5 +1,7 @@
 package edu.abc.berkeley;
 
+import java.io.File;
+
 import org.apache.commons.lang.SystemUtils;
 
 import ij.IJ;
@@ -15,7 +17,7 @@ public class helperFunctions {
 		String[] paths = jLP.split(delim);
 		String pathToLib = "";
 		for(String path : paths) {
-			if((path.contains("/Parallel_Fiji_Visualizer_lib"))) {
+			if((path.contains(File.separator+"Parallel_Fiji_Visualizer_lib"))) {
 				pathToLib = path;
 				break;
 			}
@@ -34,9 +36,9 @@ public class helperFunctions {
 			IJ.log("Could not determine OS when loading lib: "+libName+"\n");
 		}
 		if(!pathToLib.contains("Parallel_Fiji_Visualizer_lib")) {
-			pathToLib = pathToLib+"/Parallel_Fiji_Visualizer_lib";
+			pathToLib = pathToLib+File.separator+"Parallel_Fiji_Visualizer_lib";
 		}
-		pathToLib = pathToLib+"/";
+		pathToLib = pathToLib+File.separator;
 		System.load(pathToLib+libName+ext);
 	}
 
