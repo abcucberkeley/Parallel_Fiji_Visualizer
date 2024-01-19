@@ -26,7 +26,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRZC_parallelReadZarrUINT8 
 
 	// Main Array to be returned
 	jobjectArray outer = env->NewObjectArray(arrDims[2], cls, iniVal);
-    env->DeleteLocalRef(iniVal);
+	env->DeleteLocalRef(iniVal);
 	env->DeleteLocalRef(cls);
 
 	for(uint64_t i = 0; i < arrDims[2]; i++){
