@@ -74,10 +74,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_PRTC_parallelReadTiffUINT16
 	}
 	env->ReleaseStringUTFChars(fileName, fName);
 	uint64_t zSize = arrDims[0]*arrDims[1];
-	//std::ofstream myfile;
-	//myfile.open ("/home/matt/Desktop/Fiji.app/lib/linux64/Parallel_Fiji_Visualizer_lib/example.txt");
-	//myfile << arrDims[0] << " " << arrDims[1] << " " << arrDims[2] << "\n";
-	//myfile.close();
+
 	// Get the short array class
 	jclass cls = env->FindClass("[S");
 
