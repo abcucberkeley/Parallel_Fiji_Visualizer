@@ -17,3 +17,7 @@ gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRTC.c parallelReadTiff.c mallocDynamic.c 
 JDK 2019:
 gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRTC.c parallelReadTiff.c -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -shared -o libpReadTiffC.so -ltiff
 
+cpp-tiff cluster:
+
+g++ -fopenmp -O3 -DNDEBUG -fPIC -DPIC -Wl,-rpath='$ORIGIN' -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include/linux -I/clusterfs/fiona/matthewmueller/cpp-tiff/c-tiff/src -L/clusterfs/fiona/matthewmueller/cpp-tiff/c-tiff/release PRTC.cpp -shared -o libpReadTiffC.so -lcppTiff -static-libgcc -static-libstdc++
+
