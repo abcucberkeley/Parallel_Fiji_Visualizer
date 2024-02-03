@@ -1,7 +1,5 @@
-gcc -fopenmp -O3 -DNDEBUG -fPIC -DPIC PRZC.c parallelReadZarr.c -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -I/home/matt/Desktop/ptrFijiPlugin/PRZC/cBlosc2/include -I/home/matt/Desktop/ptrFijiPlugin/PRZC/cJSON/include -L/home/matt/Desktop/ptrFijiPlugin/PRZC/cBlosc2/lib -L /home/matt/Desktop/ptrFijiPlugin/PRZC/cJSON/lib -shared -o libpReadZarrC.so -lblosc2 -lcjson -lz
-
 cpp-zarr:
 g++ -fopenmp -O3 -DNDEBUG -fPIC -DPIC -Wl,-rpath='$ORIGIN' -I/home/matt/jdk-19/include -I/home/matt/jdk-19/include/linux -I/usr/local/include -L/usr/local/lib PRZC.cpp -shared -o libpReadZarrC.so -lcppZarr
 
 cpp-zarr cluster:
-g++ -fopenmp -O3 -DNDEBUG -fPIC -DPIC -Wl,-rpath='$ORIGIN' -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include/linux -I/clusterfs/fiona/matthewmueller/cppZarrTest -I/clusterfs/fiona/matthewmueller/cppZarrTest/c-zarr/src -L/clusterfs/fiona/matthewmueller/cppZarrTest/c-zarr/release PRZC.cpp -shared -o libpReadZarrC.so -lcppZarr
+g++ -fopenmp -O3 -DNDEBUG -fPIC -DPIC -Wl,-rpath='$ORIGIN' -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include -I/global/software/sl-7.x86_64/modules/langs/java/1.8.0_121/include/linux -I/clusterfs/fiona/matthewmueller/cppZarrTest -I/clusterfs/fiona/matthewmueller/cppZarrTest/c-zarr/src -L/clusterfs/fiona/matthewmueller/cppZarrTest/c-zarr/release/lib64 PRZC.cpp -shared -o libpReadZarrC.so -lcppZarr -static-libgcc -static-libstdc++
