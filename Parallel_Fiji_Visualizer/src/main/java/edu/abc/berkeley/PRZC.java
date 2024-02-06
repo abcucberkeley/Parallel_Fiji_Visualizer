@@ -6,9 +6,7 @@ public class PRZC {
     // Load system libraries
     static {
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		helperFunctions.loadLib("libzlib");
-    		helperFunctions.loadLib("libblosc2");
-    		helperFunctions.loadLib("cjson");
+    		helperFunctions.loadLib("libcppZarr");
     	}
     	
 		//if(!SystemUtils.IS_OS_WINDOWS) {

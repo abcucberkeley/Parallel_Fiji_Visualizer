@@ -9,10 +9,7 @@ public class PRTC {
     // Load system libraries
     static { 	
     	if(SystemUtils.IS_OS_WINDOWS) {
-        	helperFunctions.loadLib("libzlib");
-        	helperFunctions.loadLib("libzstd");
-        	helperFunctions.loadLib("libdeflate");
-        	helperFunctions.loadLib("libtiff");
+        	helperFunctions.loadLib("libcppTiff");
     	}
     	helperFunctions.loadLib("libpReadTiffC");
     }

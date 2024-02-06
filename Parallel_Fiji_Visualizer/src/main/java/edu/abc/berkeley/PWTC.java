@@ -6,7 +6,7 @@ public class PWTC {
     // Load system libraries
     static {
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		helperFunctions.loadLib("libtiff");
+    		helperFunctions.loadLib("libcppTiff");
     	}
         helperFunctions.loadLib("libpWriteTiffC");
     }

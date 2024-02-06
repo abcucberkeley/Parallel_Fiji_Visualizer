@@ -5,9 +5,7 @@ import org.apache.commons.lang.SystemUtils;
 public class PWZC {
 	static {
     	if(SystemUtils.IS_OS_WINDOWS) {
-    		helperFunctions.loadLib("zlib");
-    		helperFunctions.loadLib("libblosc2");
-    		helperFunctions.loadLib("cjson");
+    		helperFunctions.loadLib("libcppZarr");
     	}
 		//if(!SystemUtils.IS_OS_WINDOWS) {
 		//	helperFunctions.loadLib("blosc2");
