@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-//#include "parallelWriteZarr.h"
 #include <vector>
 #include "parallelwritezarr.h"
 #include "zarr.h"
@@ -68,32 +67,32 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_PWZC_parallelWriteZarr
     const std::vector<uint64_t> startCoords = {startX,startY,startZ};
     const std::vector<uint64_t> endCoords = {endX,endY,endZ};
     const std::vector<uint64_t> writeShape = {endX-startX,endY-startY,endZ-startZ};
-	zarr Zarr(fName,{chunkXSize,chunkYSize,chunkZSize},0,5,cname,"blosc",1,".",dtypeString,0,{},"F",writeShape,2,{0,0,0},false,{1,1,1});
+	zarr Zarr(fName,{chunkXSize,chunkYSize,chunkZSize},0,5,cname,"blosc",1,".",dtypeString,"0",{},"F",writeShape,2,{0,0,0},false,{1,1,1});
 	void* zarrArrC = malloc(Zarr.get_shape(0)*Zarr.get_shape(1)*Zarr.get_shape(2)*Zarr.dtypeBytes());
+
 	#pragma omp parallel for
 	for(uint64_t k = 0; k < Zarr.get_shape(2); k++){
 		for(uint64_t j = 0; j < Zarr.get_shape(1); j++){
 			for(uint64_t i = 0; i < Zarr.get_shape(0); i++){
 				switch(Zarr.dtypeBytes()){
 					case 1:
-						((uint8_t*)zarrArrC)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((uint8_t*)zarrArr)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
+						((uint8_t*)zarrArrC)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((uint8_t*)zarrArr)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
 						break;
 					case 2:
-						((uint16_t*)zarrArrC)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((uint16_t*)zarrArr)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
+						((uint16_t*)zarrArrC)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((uint16_t*)zarrArr)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
 						break;
 					case 4:
-						((float*)zarrArrC)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((float*)zarrArr)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
+						((float*)zarrArrC)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((float*)zarrArr)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
 						break;
 					case 8:
-						((double*)zarrArrC)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((double*)zarrArr)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
+						((double*)zarrArrC)[i+(j*Zarr.get_shape(0))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))] = ((double*)zarrArr)[j+(i*Zarr.get_shape(1))+(k*Zarr.get_shape(1)*Zarr.get_shape(0))];
 						break;
 				}
 			}
 		}
 	}
+	free(zarrArr);
 	Zarr.write_zarray();
 	Zarr.set_chunkInfo(startCoords, endCoords);
 	parallelWriteZarr(Zarr, zarrArrC, startCoords, endCoords, writeShape, bits, useUuid, crop, true);
-	//writeZarrParallelHelper(fName, zarr, startX, startY, startZ, endX, endY, endZ, chunkXSize, chunkYSize, chunkZSize, crop, cname, useUuid, bytes, 1);
-
 }
