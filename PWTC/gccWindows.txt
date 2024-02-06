@@ -1,0 +1,1 @@
+g++ -O3 -fopenmp -fPIC -DPIC PWTC.cpp -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Program Files (x86)\cpp-tiff\include" -L"C:\Program Files (x86)\cpp-tiff\bin" -shared -o libpWriteTiffC.dll -lcppTiff -static-libgcc -static-libstdc++

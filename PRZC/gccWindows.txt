@@ -1,0 +1,1 @@
+g++ -O3 -fopenmp -fPIC -DPIC PRZC.cpp -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Program Files (x86)\cpp-zarr\include" -L"C:\Program Files (x86)\cpp-zarr\bin" -shared -o libpReadZarrC.dll -lcppZarr -static-libgcc -static-libstdc++

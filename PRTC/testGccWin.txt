@@ -1,1 +1,1 @@
-gcc -O3 -fopenmp -fPIC -DPIC PRTC.c parallelReadTiff.c -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Program Files (x86)\tiff\include" -L"C:\Program Files (x86)\tiff\lib" -shared -static -o pReadTiffC.dll -ltiff
+g++ -O3 -fopenmp -fPIC -DPIC PRTC.cpp -I"C:\jdk-19\include" -I"C:\jdk-19\include\win32" -I"C:\Program Files (x86)\cpp-tiff\include" -L"C:\Program Files (x86)\cpp-tiff\bin" -shared -o libpReadTiffC.dll -lcppTiff -static-libgcc -static-libstdc++
