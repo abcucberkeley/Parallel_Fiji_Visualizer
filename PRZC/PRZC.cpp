@@ -209,7 +209,11 @@ JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_PRZC_getImageDims (JNIEnv *en
     zarr Zarr(fName);
 	uint64_t dims[3] = {Zarr.get_shape(0),Zarr.get_shape(1),Zarr.get_shape(2)};
     jlongArray rval = env->NewLongArray(3);
+    #ifdef __APPLE__
+    env->SetLongArrayRegion(rval,0,3,(long int*)dims);
+    #else
     env->SetLongArrayRegion(rval,0,3,(int64_t*)dims);
+    #endif
     env->ReleaseStringUTFChars(fileName, fName);
     return rval;
 }

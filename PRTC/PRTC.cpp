@@ -224,7 +224,11 @@ JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_PRTC_getImageDims (JNIEnv *en
 	uint64_t* dims = getImageSize(fName);
 	env->ReleaseStringUTFChars(fileName, fName);
 	jlongArray rval = env->NewLongArray(3);
+	#ifdef __APPLE__
+	env->SetLongArrayRegion(rval,0,3,(long int*)dims);
+	#else
 	env->SetLongArrayRegion(rval,0,3,(int64_t*)dims);
+	#endif
 	free(dims); 
 	return rval;
 
