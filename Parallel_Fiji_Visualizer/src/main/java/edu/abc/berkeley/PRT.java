@@ -29,7 +29,7 @@ public class PRT {
 		
 		// Back up method if no file info is available
 		if(info == null) {
-			PRT_NoFileInfo(fileName);
+			PRT_NoFileInfo(fileName, showImage);
 			return;
 		}
 		PRTC prtc = new PRTC();
@@ -128,7 +128,7 @@ public class PRT {
 		return this.imp;
 	}
 	
-	void PRT_NoFileInfo(String fileName){
+	void PRT_NoFileInfo(String fileName, boolean showImage){
 		PRTC prtc = new PRTC();
 		long bits = prtc.getDataType(fileName);
 		long[] dims = prtc.getImageDims(fileName);
@@ -175,7 +175,8 @@ public class PRT {
 		}
 
 		ImagePlus imp = new ImagePlus(f.getName(),stack);
-		imp.show();
+		if(showImage) imp.show();
+		else this.imp = imp;
 		
 	}
 	
