@@ -2,6 +2,10 @@
 # Parallel_Fiji_Visualizer
 An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 
+## Limitations
+1. Currently RGB tiffs are not supported but support may be added in the future
+2. ImageJ tiff files (tiff files written by ImageJ) with multiple color channels are unofficially supported
+
 ## Quick Start Guide
 
 ### Prerequisites
