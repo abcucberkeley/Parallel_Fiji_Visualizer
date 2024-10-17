@@ -25,4 +25,4 @@ An efficient TIFF/Zarr reader/writer that can utilize all the cores of your CPU!
 
 Please cite our software if you find it useful in your work:
 
-Matthew Mueller, Xiongtao Ruan#, Eric Betzig, & Srigokul Upadhyayula#. (2023). Fast Fiji Visualization Tools for Tiff and Zarr (v1.1.0). Zenodo. https://doi.org/10.5281/zenodo.7613251 (# indicates corresponding author)
+Xiongtao Ruan, Matthew Mueller, Gaoxiang Liu, Frederik Görlitz, Tian-Ming Fu, Daniel E. Milkie, Joshua L. Lillvis, Alexander Kuhn, Chu Yi Aaron Herr, Wilmene Hercule, Marc Nienhaus, Alison N. Killilea, Eric Betzig, Srigokul Upadhyayula. Image processing tools for petabyte-scale light sheet microscopy data. Nature Methods (2024). https://doi.org/10.1038/s41592-024-02475-4
