@@ -9,6 +9,7 @@ import ij.ParallelImagePlus;
 import ij.ParallelVirtualStack;
 import ij.VirtualStack;
 import ij.plugin.Memory;
+import ij.io.FileInfo;
 
 public class PRZ {
 	private ImagePlus imp;
@@ -76,6 +77,13 @@ public class PRZ {
 			}
 
 			ImagePlus imp = new ImagePlus(f.getName(),stack);
+			FileInfo fileInfo = imp.getOriginalFileInfo();
+			if (fileInfo == null) {
+			    fileInfo = new FileInfo(); // Create a new FileInfo if none exists
+			}
+			fileInfo.directory = f.getParent();
+			fileInfo.fileName = f.getName();
+			imp.setFileInfo(fileInfo);
 			if(showImage) imp.show();
 			else this.imp = imp;
 		}
