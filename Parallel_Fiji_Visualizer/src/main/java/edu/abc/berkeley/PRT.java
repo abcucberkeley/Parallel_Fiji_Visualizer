@@ -36,7 +36,6 @@ public class PRT {
 		long bits = prtc.getDataType(fileName);
 		long[] dims = prtc.getImageDims(fileName);
 
-
 		FileOpener fo = new FileOpener(null);
 		ColorModel cm = fo.createColorModel(info[0]);
 		ImageStack stack = new ImageStack((int)dims[1],(int)dims[0],cm);
@@ -49,6 +48,7 @@ public class PRT {
 				}
 			}
 		}
+		
 		// For now product of first two dims cannot be greater than INTMAX
 		try {
 			if(dims[0]*dims[1] > (long)Integer.MAX_VALUE) throw new Exception("Product of first two dimensions cannot be greater than 2147483647");
@@ -175,6 +175,13 @@ public class PRT {
 		}
 
 		ImagePlus imp = new ImagePlus(f.getName(),stack);
+		FileInfo fileInfo = imp.getOriginalFileInfo();
+		if (fileInfo == null) {
+		    fileInfo = new FileInfo(); // Create a new FileInfo if none exists
+		}
+		fileInfo.directory = f.getParent();
+		fileInfo.fileName = f.getName();
+		imp.setFileInfo(fileInfo);
 		if(showImage) imp.show();
 		else this.imp = imp;
 		
