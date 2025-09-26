@@ -11,6 +11,8 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.SwingConstants;
 
+import ij.io.OpenDialog;
+
 public class DragDropFrame extends JFrame{
 	
 	 public DragDropFrame() {
@@ -19,7 +21,7 @@ public class DragDropFrame extends JFrame{
 	        super("Parallel Fiji Visualizer");
 
 	        // Set the size
-	        this.setSize(400, 250);
+	        this.setSize(500, 375);
 	        
 	        this.setLayout(new GridBagLayout());
 	        GridBagConstraints c = new GridBagConstraints();
@@ -63,12 +65,35 @@ public class DragDropFrame extends JFrame{
 	        this.add(saveAsZarrButton,c);
 	        saveAsZarrButton.setVisible(true);
 	        
+	        // Import from Text List
+	        JButton importFromTextListButton = new JButton("Import from Text List");
+	        importFromTextListButton.addActionListener(new ActionListener() {
+
+	            @Override
+	            public void actionPerformed(ActionEvent e) {
+	            	OpenDialog od = new OpenDialog("Select a file", null);
+	                String directory = od.getDirectory();
+	                String fileName = od.getFileName();
+	            	if(fileName != null) {
+	            		String fullPath = directory + fileName;
+	            		new IFTL(fullPath);
+	            	}
+	            }
+	        });
+	        c.fill = GridBagConstraints.HORIZONTAL;
+	        c.anchor = GridBagConstraints.NORTH;
+	        c.weightx = 0.5;
+	        c.gridx = 2;
+	        c.gridy = 0;
+	        this.add(importFromTextListButton,c);
+	        importFromTextListButton.setVisible(true);
+	        
 	        // Create the label
 	        c.fill = GridBagConstraints.HORIZONTAL;
 	        c.weightx = 1.0;
 	        c.gridx = 0;
 	        c.gridy = 1;
-	        c.gridwidth = 2;
+	        c.gridwidth = 3;
 	        //JLabel myLabel = new JLabel("Drag something here!", SwingConstants.CENTER);
 	        JLabel myLabel = new JLabel("Drag something here!", SwingConstants.HORIZONTAL);
 	        this.add(myLabel,c);
