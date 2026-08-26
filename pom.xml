@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+		http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>org.scijava</groupId>
+		<artifactId>pom-scijava</artifactId>
+		<version>36.0.0</version>
+		<relativePath />
+	</parent>
+
+	<groupId>edu.abc.berkeley</groupId>
+	<artifactId>Parallel_Fiji_Visualizer</artifactId>
+	<version>1.3.0</version>
+
+	<name>Parallel Fiji Visualizer</name>
+	<description>A parallel TIFF/Zarr reader/writer for ImageJ/Fiji that can use all CPU cores.</description>
+	<url>https://github.com/abcucberkeley/Parallel_Fiji_Visualizer</url>
+	<inceptionYear>2022</inceptionYear>
+	<organization>
+		<name>The Advanced Bioimaging Center</name>
+		<url>https://abc.berkeley.edu/</url>
+	</organization>
+	<licenses>
+		<license>
+			<name>CC0 1.0 Universal License</name>
+			<url>https://creativecommons.org/publicdomain/zero/1.0/</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<id>MattHazard</id>
+			<name>Matthew Mueller</name>
+			<url>https://github.com/MattHazard</url>
+			<roles>
+				<role>founder</role>
+				<role>lead</role>
+				<role>developer</role>
+				<role>debugger</role>
+				<role>reviewer</role>
+				<role>support</role>
+				<role>maintainer</role>
+			</roles>
+		</developer>
+	</developers>
+	<contributors>
+		<contributor>
+			<name>None</name>
+		</contributor>
+	</contributors>
+
+	<mailingLists>
+		<mailingList>
+			<name>Image.sc Forum</name>
+			<archive>https://forum.image.sc/tag/imagej</archive>
+		</mailingList>
+	</mailingLists>
+
+	<scm>
+		<connection>scm:git:https://github.com/abcucberkeley/Parallel_Fiji_Visualizer</connection>
+		<developerConnection>scm:git:git@github.com:abcucberkeley/Parallel_Fiji_Visualizer</developerConnection>
+		<tag>HEAD</tag>
+		<url>https://github.com/abcucberkeley/Parallel_Fiji_Visualizer</url>
+	</scm>
+	<issueManagement>
+		<system>GitHub Issues</system>
+		<url>https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/issues</url>
+	</issueManagement>
+	<ciManagement>
+		<system>Jenkins</system>
+	</ciManagement>
+
+	<properties>
+		<package-name>edu.abc.berkeley</package-name>
+		<main-class>edu.abc.berkeley.ParallelFijiVisualizer</main-class>
+		<license.licenseName>cc0</license.licenseName>
+		<license.copyrightOwners>The Advanced Bioimaging Center</license.copyrightOwners>
+	</properties>
+
+	<repositories>
+		<repository>
+			<id>scijava.public</id>
+			<url>https://maven.scijava.org/content/groups/public</url>
+		</repository>
+	</repositories>
+
+	<dependencies>
+		<dependency>
+			<groupId>net.imagej</groupId>
+			<artifactId>imagej</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>net.imagej</groupId>
+			<artifactId>ij</artifactId>
+		</dependency>
+		<!-- Extracts and loads the natives bundled under natives/<platform>/ -->
+		<dependency>
+			<groupId>org.scijava</groupId>
+			<artifactId>native-lib-loader</artifactId>
+		</dependency>
+		<!-- Used directly (SystemUtils/StringUtils in DragDropListener) -->
+		<dependency>
+			<groupId>commons-lang</groupId>
+			<artifactId>commons-lang</artifactId>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<source>16</source>
+					<target>16</target>
+					<compilerArgs>
+						<!-- JNI headers are generated here, never hand-maintained;
+						     src/main/native/CMakeLists.txt compiles against them. -->
+						<arg>-h</arg>
+						<arg>${project.build.directory}/generated-jni-headers</arg>
+					</compilerArgs>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<!-- mvn package -Pnative: also build the JNI libraries (CMake superbuild
+		     of cpp-tiff + cpp-zarr) and bundle them into the jar for this
+		     platform. Requires cmake >= 3.18, a C++ toolchain with OpenMP, and
+		     network access on the first run. -->
+		<profile>
+			<id>native</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.codehaus.mojo</groupId>
+						<artifactId>exec-maven-plugin</artifactId>
+						<version>3.1.0</version>
+						<executions>
+							<execution>
+								<id>cmake-configure</id>
+								<phase>process-classes</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>cmake</executable>
+									<arguments>
+										<argument>-S</argument>
+										<argument>${project.basedir}/src/main/native</argument>
+										<argument>-B</argument>
+										<argument>${project.build.directory}/native-build</argument>
+										<argument>-DCMAKE_BUILD_TYPE=Release</argument>
+										<argument>-DJNI_HEADERS_DIR=${project.build.directory}/generated-jni-headers</argument>
+										<argument>-DNATIVES_OUTPUT_DIR=${project.build.directory}/classes/natives</argument>
+										<argument>-DNATIVES_DEV_DIR=${project.build.directory}/natives</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>cmake-build</id>
+								<phase>process-classes</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>cmake</executable>
+									<arguments>
+										<argument>--build</argument>
+										<argument>${project.build.directory}/native-build</argument>
+										<argument>--parallel</argument>
+									</arguments>
+								</configuration>
+							</execution>
+							<execution>
+								<id>cmake-install</id>
+								<phase>process-classes</phase>
+								<goals>
+									<goal>exec</goal>
+								</goals>
+								<configuration>
+									<executable>cmake</executable>
+									<arguments>
+										<argument>--install</argument>
+										<argument>${project.build.directory}/native-build</argument>
+									</arguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+</project>

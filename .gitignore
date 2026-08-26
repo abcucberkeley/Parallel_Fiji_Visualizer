@@ -1,1 +1,19 @@
+# Build outputs
+target/
+build/
+
+# CI config stays local to the build machine
+Jenkinsfile
+# Per-platform natives collected by the Jenkins pipeline
+jenkinsNatives/
+
+# OS cruft
 .DS_Store
+
+# IDE metadata
+.classpath
+.project
+.settings/
+.idea/
+*.iml
+.vscode/
