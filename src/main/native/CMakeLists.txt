@@ -8,7 +8,27 @@ endif()
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(JNI REQUIRED)
+# Only the JNI headers are needed (the shims never link libjvm), so accept
+# both a full JDK and a headers-only JAVA_HOME -- e.g. an include/ directory
+# rsync'd onto the cluster where no JDK with headers is installed.
+find_package(JNI)
+if(JNI_FOUND)
+  set(PFV_JNI_INCLUDE_DIRS ${JNI_INCLUDE_DIRS})
+else()
+  set(_java_home "$ENV{JAVA_HOME}")
+  if(_java_home AND EXISTS "${_java_home}/include/jni.h")
+    set(PFV_JNI_INCLUDE_DIRS "${_java_home}/include")
+    foreach(_md linux darwin win32)
+      if(EXISTS "${_java_home}/include/${_md}")
+        list(APPEND PFV_JNI_INCLUDE_DIRS "${_java_home}/include/${_md}")
+      endif()
+    endforeach()
+    message(STATUS "Using JNI headers from JAVA_HOME: ${_java_home}/include")
+  else()
+    message(FATAL_ERROR "JNI headers not found. Set JAVA_HOME to a JDK, or to "
+      "any directory containing include/jni.h and include/<platform>/jni_md.h.")
+  endif()
+endif()
 find_package(OpenMP REQUIRED)
 include(ExternalProject)
 
@@ -145,7 +165,7 @@ set_source_files_properties(reader_zarr.cpp writer_zarr.cpp PROPERTIES
 
 foreach(t ParallelReadC ParallelWriteC)
   target_include_directories(${t} PRIVATE
-      ${JNI_INCLUDE_DIRS}
+      ${PFV_JNI_INCLUDE_DIRS}
       ${JNI_HEADERS_DIR}
       ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(${t} PRIVATE
@@ -155,6 +175,14 @@ foreach(t ParallelReadC ParallelWriteC)
       -static-libgcc
       -static-libstdc++)
   add_dependencies(${t} cpp_tiff cpp_zarr)
+  if(MINGW)
+    # libcppTiff/libcppZarr are built with -static-libgcc, and MinGW DLLs
+    # auto-export every global symbol -- including the statically linked
+    # unwinder (_Unwind_Resume etc.). Linking their import libs together with
+    # our own static libgcc trips "multiple definition"; first-defined wins.
+    # Same workaround cpp-zarr itself uses on MinGW.
+    target_link_options(${t} PRIVATE -Wl,--allow-multiple-definition)
+  endif()
   if(APPLE)
     # libcppTiff/libcppZarr carry @rpath install names; resolve them next to us.
     set_target_properties(${t} PROPERTIES

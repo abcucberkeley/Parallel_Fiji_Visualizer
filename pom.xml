@@ -80,6 +80,10 @@
 		<main-class>edu.abc.berkeley.ParallelFijiVisualizer</main-class>
 		<license.licenseName>cc0</license.licenseName>
 		<license.copyrightOwners>The Advanced Bioimaging Center</license.copyrightOwners>
+		<!-- Override (-Dnative.build.dir=/tmp/...) to put the CMake build tree on
+		     a local disk: CMake's built-in tar cannot restore timestamps on some
+		     network filesystems and fails extracting archives with symlinks. -->
+		<native.build.dir>${project.build.directory}/native-build</native.build.dir>
 	</properties>
 
 	<repositories>
@@ -155,7 +159,7 @@
 										<argument>-S</argument>
 										<argument>${project.basedir}/src/main/native</argument>
 										<argument>-B</argument>
-										<argument>${project.build.directory}/native-build</argument>
+										<argument>${native.build.dir}</argument>
 										<argument>-DCMAKE_BUILD_TYPE=Release</argument>
 										<argument>-DJNI_HEADERS_DIR=${project.build.directory}/generated-jni-headers</argument>
 										<argument>-DNATIVES_OUTPUT_DIR=${project.build.directory}/classes/natives</argument>
@@ -173,7 +177,7 @@
 									<executable>cmake</executable>
 									<arguments>
 										<argument>--build</argument>
-										<argument>${project.build.directory}/native-build</argument>
+										<argument>${native.build.dir}</argument>
 										<argument>--parallel</argument>
 									</arguments>
 								</configuration>
@@ -188,7 +192,7 @@
 									<executable>cmake</executable>
 									<arguments>
 										<argument>--install</argument>
-										<argument>${project.build.directory}/native-build</argument>
+										<argument>${native.build.dir}</argument>
 									</arguments>
 								</configuration>
 							</execution>
