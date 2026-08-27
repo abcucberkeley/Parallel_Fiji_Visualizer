@@ -48,7 +48,8 @@ template <> struct JniArrayTraits<int32_t> {
 	static constexpr const char* sliceClass = "[I";
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewIntArray(n); }
 	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const int32_t* src) {
-		env->SetIntArrayRegion(a, start, len, src);
+		// jint is "long" on MinGW -- a distinct type from int32_t, same 32 bits
+		env->SetIntArrayRegion(a, start, len, reinterpret_cast<const jint*>(src));
 	}
 };
 
