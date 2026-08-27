@@ -9,7 +9,7 @@ bundled inside the plugin jar and loaded automatically — no manual library
 installation required.
 
 ## Limitations
-1. Currently RGB tiffs are not supported but support may be added in the future
+1. Chunky (interleaved) 8-bit RGB/RGBA tiffs are read in parallel; planar RGB tiffs and 16-bit RGB are not supported. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
 2. ImageJ tiff files (tiff files written by ImageJ) with multiple color channels are unofficially supported
 
 ## Quick Start Guide

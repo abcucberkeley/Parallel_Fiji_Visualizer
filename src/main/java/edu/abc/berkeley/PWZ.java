@@ -24,6 +24,10 @@ public class PWZ {
 		//WindowManager.getCurrentImage();
 		
 		if(cImagePlus == null) return;
+		if(cImagePlus.getType() == ImagePlus.COLOR_RGB) {
+			IJ.log("RGB images cannot be saved as zarr\n");
+			return;
+		}
 		ImageStack cImageStack = cImagePlus.getImageStack();
 		Object[] cImageObj = cImageStack.getImageArray();
 	

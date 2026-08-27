@@ -10,6 +10,7 @@ import ij.ParallelVirtualStack;
 import ij.VirtualStack;
 import ij.plugin.Memory;
 import ij.io.FileInfo;
+import ij.measure.Calibration;
 
 public class PRZ {
 	private ImagePlus imp;
@@ -46,6 +47,11 @@ public class PRZ {
 		if(!isVirtual) {
 			stack = new ImageStack((int)dims[1],(int)dims[0]);
 			stack.setBitDepth(tBits);
+			// The dtype string distinguishes signed/unsigned/float, which the bit
+			// count alone cannot (e.g. "<i2" vs "<u2").
+			String dtype = przc.getZarrDtype(fileName);
+			char dtypeKind = (dtype != null && dtype.length() == 3) ? dtype.charAt(1) : 'u';
+			boolean int8Cal = false, int16Cal = false;
 			// Zarr reads parallelize over chunks; estimate the count assuming the
 			// 256^3 chunk shape our writer uses.
 			long chunkEstimate = ((dims[0]+255)/256) * ((dims[1]+255)/256) * ((dims[2]+255)/256);
@@ -53,26 +59,48 @@ public class PRZ {
 				dims[0]*dims[1]*dims[2]*(bits/8), chunkEstimate, "Reading "+f.getName());
 			try {
 				if(bits == 8) {
-					byte im[][] = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					byte im[][];
+					if(dtypeKind == 'i') {
+						// Signed bytes are shifted to 0-255; a calibration maps them back
+						im = przc.parallelReadZarrINT8(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+						int8Cal = true;
+					}
+					else {
+						im = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					}
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
 				}
 				else if (bits == 16) {
-
-					short im[][] = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					short im[][];
+					if(dtypeKind == 'i') {
+						// Shifted to 0-65535; the signed-16 calibration maps back
+						im = przc.parallelReadZarrINT16(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+						int16Cal = true;
+					}
+					else {
+						im = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					}
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
 				}
 				else if (bits == 32) {
-					float im[][] = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					float im[][];
+					if(dtypeKind == 'i') im = przc.parallelReadZarrINT32(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT32(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					else im = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
 				}
 				else if(bits == 64) {
-					float im[][] = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					// ImageJ has no double or 64-bit integer type; all become float
+					float im[][];
+					if(dtypeKind == 'i') im = przc.parallelReadZarrINT64(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT64(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					else im = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
@@ -94,6 +122,11 @@ public class PRZ {
 			fileInfo.directory = f.getParent();
 			fileInfo.fileName = f.getName();
 			imp.setFileInfo(fileInfo);
+			if(int8Cal) {
+				// Map the shifted signed bytes back to their real values
+				imp.getLocalCalibration().setFunction(Calibration.STRAIGHT_LINE, new double[]{-128.0,1.0}, "gray value");
+			}
+			if(int16Cal) imp.getLocalCalibration().setSigned16BitCalibration();
 			if(showImage) imp.show();
 			else this.imp = imp;
 		}

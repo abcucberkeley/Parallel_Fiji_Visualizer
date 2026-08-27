@@ -43,6 +43,15 @@ template <> struct JniArrayTraits<float> {
 	}
 };
 
+template <> struct JniArrayTraits<int32_t> {
+	using ArrayType = jintArray;
+	static constexpr const char* sliceClass = "[I";
+	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewIntArray(n); }
+	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const int32_t* src) {
+		env->SetIntArrayRegion(a, start, len, src);
+	}
+};
+
 // Throw a java.lang.RuntimeException (no-op if an exception is already pending).
 inline void throwRuntime(JNIEnv* env, const char* msg) {
 	if (env->ExceptionCheck()) return;
@@ -104,13 +113,43 @@ inline void* slicesToNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElem
 	return buf;
 }
 
-// Convert a double buffer to float (ImageStack has no double support).
-inline float* doubleToFloat(const double* src, uint64_t n) {
+// Convert a numeric buffer to float (ImageStack displays 32-bit data as float).
+template <typename S>
+inline float* convertToFloat(const S* src, uint64_t n) {
 	float* dst = (float*)malloc(n * sizeof(float));
 	if (dst == nullptr) return nullptr;
 	#pragma omp parallel for
 	for (int64_t i = 0; i < (int64_t)n; i++) {
 		dst[i] = (float)src[i];
+	}
+	return dst;
+}
+
+// Convert a double buffer to float (ImageStack has no double support).
+inline float* doubleToFloat(const double* src, uint64_t n) {
+	return convertToFloat<double>(src, n);
+}
+
+// XOR-shift signed samples into the unsigned range ImageJ expects: +128 for
+// int8 (mask 0x80) and +32768 for int16 (mask 0x8000) are bitwise-identical
+// to flipping the sign bit. A calibration on the Java side maps values back.
+template <typename T>
+inline void xorShiftInPlace(T* data, uint64_t n, T mask) {
+	#pragma omp parallel for
+	for (int64_t i = 0; i < (int64_t)n; i++) {
+		data[i] ^= mask;
+	}
+}
+
+// Pack chunky (interleaved) 8-bit RGB or RGBA samples into ImageJ's int-based
+// RGB pixels (0xff000000 | r<<16 | g<<8 | b); alpha, if present, is dropped.
+inline int32_t* packRgbToArgb(const uint8_t* src, uint64_t nPixels, uint64_t samplesPerPixel) {
+	int32_t* dst = (int32_t*)malloc(nPixels * sizeof(int32_t));
+	if (dst == nullptr) return nullptr;
+	#pragma omp parallel for
+	for (int64_t i = 0; i < (int64_t)nPixels; i++) {
+		const uint8_t* p = src + i * samplesPerPixel;
+		dst[i] = (int32_t)(0xFF000000u | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2]);
 	}
 	return dst;
 }

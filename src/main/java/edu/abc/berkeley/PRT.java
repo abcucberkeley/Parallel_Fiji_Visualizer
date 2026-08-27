@@ -57,29 +57,63 @@ public class PRT {
 			System.out.println(e);
 			return;
 		}
+		long sampleFormat = prtc.getTiffSampleFormat(fileName);
+		long samplesPerPixel = prtc.getTiffSamplesPerPixel(fileName);
+		boolean int8Cal = false;
 		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
-			dims[0]*dims[1]*dims[2]*(bits/8), dims[2], "Reading "+f.getName());
+			dims[0]*dims[1]*dims[2]*samplesPerPixel*(bits/8), dims[2], "Reading "+f.getName());
 		try {
-			if(bits == 8) {
-				byte im[][] = prtc.parallelReadTiffUINT8(fileName);
+			if(samplesPerPixel > 1) {
+				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
+				if(bits == 8) {
+					int im[][] = prtc.parallelReadTiffRGB8(fileName);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
+				}
+				else {
+					IJ.log("Only 8-bit RGB tiffs are supported\n");
+					return;
+				}
+			}
+			else if(bits == 8) {
+				byte im[][];
+				if(sampleFormat == 2) {
+					// Signed bytes are shifted to 0-255; a calibration maps them back
+					im = prtc.parallelReadTiffINT8(fileName);
+					int8Cal = true;
+				}
+				else {
+					im = prtc.parallelReadTiffUINT8(fileName);
+				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 16) {
-				short im[][] = prtc.parallelReadTiffUINT16(fileName);
+				// Signed 16-bit data is shifted natively; the FileInfo-based
+				// calibration maps the values back
+				short im[][] = sampleFormat == 2 ? prtc.parallelReadTiffINT16(fileName)
+					: prtc.parallelReadTiffUINT16(fileName);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 32) {
-				float im[][] = prtc.parallelReadTiffFLOAT(fileName);
+				float im[][];
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName);
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName);
+				else im = prtc.parallelReadTiffFLOAT(fileName);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if(bits == 64) {
-				float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
+				// ImageJ has no double or 64-bit integer type; all become float
+				float im[][];
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName);
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName);
+				else im = prtc.parallelReadTiffDOUBLE(fileName);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
@@ -117,6 +151,11 @@ public class PRT {
 			return;
 		}
 
+		if(int8Cal) {
+			// Map the shifted signed bytes back to their real values
+			imp.getLocalCalibration().setFunction(Calibration.STRAIGHT_LINE, new double[]{-128.0,1.0}, "gray value");
+		}
+
 		imp = makeComposite(imp, info[0]);
 		//IJ.showProgress(1.0);
 		
@@ -152,29 +191,68 @@ public class PRT {
 			return;
 		}
 
+		long sampleFormat = prtc.getTiffSampleFormat(fileName);
+		long samplesPerPixel = prtc.getTiffSamplesPerPixel(fileName);
+		boolean int8Cal = false, int16Cal = false;
 		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
-			dims[0]*dims[1]*dims[2]*(bits/8), dims[2], "Reading "+f.getName());
+			dims[0]*dims[1]*dims[2]*samplesPerPixel*(bits/8), dims[2], "Reading "+f.getName());
 		try {
-			if(bits == 8) {
-				byte im[][] = prtc.parallelReadTiffUINT8(fileName);
+			if(samplesPerPixel > 1) {
+				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
+				if(bits == 8) {
+					int im[][] = prtc.parallelReadTiffRGB8(fileName);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
+				}
+				else {
+					IJ.log("Only 8-bit RGB tiffs are supported\n");
+					return;
+				}
+			}
+			else if(bits == 8) {
+				byte im[][];
+				if(sampleFormat == 2) {
+					// Signed bytes are shifted to 0-255; a calibration maps them back
+					im = prtc.parallelReadTiffINT8(fileName);
+					int8Cal = true;
+				}
+				else {
+					im = prtc.parallelReadTiffUINT8(fileName);
+				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 16) {
-				short im[][] = prtc.parallelReadTiffUINT16(fileName);
+				short im[][];
+				if(sampleFormat == 2) {
+					// Shifted to 0-65535; the signed-16 calibration maps back
+					im = prtc.parallelReadTiffINT16(fileName);
+					int16Cal = true;
+				}
+				else {
+					im = prtc.parallelReadTiffUINT16(fileName);
+				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 32) {
-				float im[][] = prtc.parallelReadTiffFLOAT(fileName);
+				float im[][];
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName);
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName);
+				else im = prtc.parallelReadTiffFLOAT(fileName);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if(bits == 64) {
-				float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
+				// ImageJ has no double or 64-bit integer type; all become float
+				float im[][];
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName);
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName);
+				else im = prtc.parallelReadTiffDOUBLE(fileName);
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
@@ -196,9 +274,14 @@ public class PRT {
 		fileInfo.directory = f.getParent();
 		fileInfo.fileName = f.getName();
 		imp.setFileInfo(fileInfo);
+		if(int8Cal) {
+			// Map the shifted signed bytes back to their real values
+			imp.getLocalCalibration().setFunction(Calibration.STRAIGHT_LINE, new double[]{-128.0,1.0}, "gray value");
+		}
+		if(int16Cal) imp.getLocalCalibration().setSigned16BitCalibration();
 		if(showImage) imp.show();
 		else this.imp = imp;
-		
+
 	}
 	
 	private ImagePlus makeComposite(ImagePlus imp, FileInfo fi) {

@@ -92,6 +92,158 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 	return out;
 }
 
+// Signed 8-bit images, shifted into 0-255 (a Java-side calibration maps back).
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT8
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return nullptr;
+	void* data = readTiffParallelWrapperNoXYFlip(fName);
+	uint64_t* dims = readDims(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	if (data == nullptr || dims == nullptr) {
+		free(data);
+		free(dims);
+		pfv::throwRuntime(env, "Parallel TIFF read failed");
+		return nullptr;
+	}
+	pfv::xorShiftInPlace<uint8_t>((uint8_t*)data, dims[0] * dims[1] * dims[2], (uint8_t)0x80u);
+	jobjectArray out = pfv::slicesToJava<int8_t>(env, (const int8_t*)data, dims[0] * dims[1], dims[2]);
+	free(data);
+	free(dims);
+	return out;
+}
+
+// Signed 16-bit images, shifted into 0-65535 (ImageJ's signed-16 convention).
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT16
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return nullptr;
+	void* data = readTiffParallelWrapperNoXYFlip(fName);
+	uint64_t* dims = readDims(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	if (data == nullptr || dims == nullptr) {
+		free(data);
+		free(dims);
+		pfv::throwRuntime(env, "Parallel TIFF read failed");
+		return nullptr;
+	}
+	pfv::xorShiftInPlace<uint16_t>((uint16_t*)data, dims[0] * dims[1] * dims[2], (uint16_t)0x8000u);
+	jobjectArray out = pfv::slicesToJava<int16_t>(env, (const int16_t*)data, dims[0] * dims[1], dims[2]);
+	free(data);
+	free(dims);
+	return out;
+}
+
+namespace {
+
+// 32-bit integer images are converted to float for ImageJ display.
+template <typename NativeT>
+jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName) {
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return nullptr;
+	NativeT* raw = (NativeT*)readTiffParallelWrapperNoXYFlip(fName);
+	uint64_t* dims = readDims(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	if (raw == nullptr || dims == nullptr) {
+		free(raw);
+		free(dims);
+		pfv::throwRuntime(env, "Parallel TIFF read failed");
+		return nullptr;
+	}
+	float* data = pfv::convertToFloat<NativeT>(raw, dims[0] * dims[1] * dims[2]);
+	free(raw);
+	if (data == nullptr) {
+		free(dims);
+		pfv::throwRuntime(env, "Out of native memory converting image to float");
+		return nullptr;
+	}
+	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2]);
+	free(data);
+	free(dims);
+	return out;
+}
+
+} // namespace
+
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT32
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	return readTiffAsFloat<int32_t>(env, fileName);
+}
+
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT32
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	return readTiffAsFloat<uint32_t>(env, fileName);
+}
+
+// ImageJ has no 64-bit integer type; converted to float like doubles are.
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT64
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	return readTiffAsFloat<int64_t>(env, fileName);
+}
+
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT64
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	return readTiffAsFloat<uint64_t>(env, fileName);
+}
+
+// Chunky (interleaved) 8-bit RGB/RGBA, packed into ImageJ int-based RGB pixels.
+JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffRGB8
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return nullptr;
+	uint8_t* raw = (uint8_t*)readTiffParallelWrapperNoXYFlip(fName);
+	uint64_t* dims = readDims(fName);
+	const uint64_t spp = getSamplesPerPixel(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	if (raw == nullptr || dims == nullptr || spp < 3) {
+		free(raw);
+		free(dims);
+		pfv::throwRuntime(env, "Parallel RGB TIFF read failed");
+		return nullptr;
+	}
+	const uint64_t nPixels = dims[0] * dims[1] * dims[2];
+	int32_t* data = pfv::packRgbToArgb(raw, nPixels, spp);
+	free(raw);
+	if (data == nullptr) {
+		free(dims);
+		pfv::throwRuntime(env, "Out of native memory packing RGB image");
+		return nullptr;
+	}
+	jobjectArray out = pfv::slicesToJava<int32_t>(env, data, dims[0] * dims[1], dims[2]);
+	free(data);
+	free(dims);
+	return out;
+}
+
+// 1 = unsigned int, 2 = signed int, 3 = IEEE float.
+JNIEXPORT jlong JNICALL Java_edu_abc_berkeley_ParallelReadNative_getTiffSampleFormat
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return 1;
+	const uint64_t fmt = getSampleFormat(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	return (jlong)fmt;
+}
+
+// 1 = grayscale, 3 = RGB, 4 = RGBA.
+JNIEXPORT jlong JNICALL Java_edu_abc_berkeley_ParallelReadNative_getTiffSamplesPerPixel
+	(JNIEnv* env, jobject, jstring fileName)
+{
+	const char* fName = env->GetStringUTFChars(fileName, nullptr);
+	if (fName == nullptr) return 1;
+	const uint64_t spp = getSamplesPerPixel(fName);
+	env->ReleaseStringUTFChars(fileName, fName);
+	return (jlong)spp;
+}
+
 JNIEXPORT jlong JNICALL Java_edu_abc_berkeley_ParallelReadNative_getTiffDataType
 	(JNIEnv* env, jobject, jstring fileName)
 {

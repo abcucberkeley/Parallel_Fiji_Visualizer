@@ -84,8 +84,8 @@ message(STATUS "Native libraries will be staged into: ${STAGE_DIRS}")
 # ---------------------------------------------------------------------------
 set(CPP_TIFF_VERSION v1.6.0)
 set(CPP_TIFF_SHA256 fc7206eef3fe55ea66f7697eb4257458640cb1dfc11c96131faae96bc4e6d542)
-set(CPP_ZARR_VERSION v1.5.1)
-set(CPP_ZARR_SHA256 313989bbf3bc2e544fbf36bcde90c09b13b64df8436a2156dad1d82000006463)
+set(CPP_ZARR_VERSION v1.5.2)
+set(CPP_ZARR_SHA256 c11bd910fc4f95b2a1519247fb9b88a03f24e69ffc2fa353c2cc80fbd93c542a)
 
 set(DEPS_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/deps")
 set(TIFF_PREFIX "${DEPS_PREFIX}/cpp-tiff")

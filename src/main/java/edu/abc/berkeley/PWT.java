@@ -54,6 +54,13 @@ public class PWT {
 
 		
 		
+		// RGB images: cpp-tiff's writer is grayscale-only, use ImageJ's writer
+		if(cImagePlus.getType() == ImagePlus.COLOR_RGB) {
+			FileSaver fs = new FileSaver(cImagePlus);
+			fs.saveAsTiff(fileName);
+			return;
+		}
+
 		ImageStack cImageStack = cImagePlus.getImageStack();
 		Object[] cImageObj = cImageStack.getImageArray();
 
