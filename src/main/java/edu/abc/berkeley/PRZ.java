@@ -46,34 +46,44 @@ public class PRZ {
 		if(!isVirtual) {
 			stack = new ImageStack((int)dims[1],(int)dims[0]);
 			stack.setBitDepth(tBits);
-			if(bits == 8) {
-				byte im[][] = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
+			// Zarr reads parallelize over chunks; estimate the count assuming the
+			// 256^3 chunk shape our writer uses.
+			long chunkEstimate = ((dims[0]+255)/256) * ((dims[1]+255)/256) * ((dims[2]+255)/256);
+			ProgressEstimator progress = ProgressEstimator.begin("readZarr",
+				dims[0]*dims[1]*dims[2]*(bits/8), chunkEstimate, "Reading "+f.getName());
+			try {
+				if(bits == 8) {
+					byte im[][] = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
 				}
-			}
-			else if (bits == 16) {
-				
-				short im[][] = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
+				else if (bits == 16) {
+
+					short im[][] = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
 				}
-			}
-			else if (bits == 32) {
-				float im[][] = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]); 
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
+				else if (bits == 32) {
+					float im[][] = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
 				}
-			}
-			else if(bits == 64) {
-				float im[][] = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
+				else if(bits == 64) {
+					float im[][] = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,dims[0],dims[1],dims[2]);
+					for(int i = 0; i < dims[2]; i++){
+						stack.addSlice(null, im[i]);
+					}
 				}
-			}
-			else {
-				IJ.log("Data type not supported\n");
-				return;
+				else {
+					IJ.log("Data type not supported\n");
+					return;
+				}
+				progress.finish();
+			} finally {
+				progress.abort();
 			}
 
 			ImagePlus imp = new ImagePlus(f.getName(),stack);

@@ -57,35 +57,42 @@ public class PRT {
 			System.out.println(e);
 			return;
 		}
-		if(bits == 8) {
-			byte im[][] = prtc.parallelReadTiffUINT8(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
+			dims[0]*dims[1]*dims[2]*(bits/8), dims[2], "Reading "+f.getName());
+		try {
+			if(bits == 8) {
+				byte im[][] = prtc.parallelReadTiffUINT8(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if (bits == 16) {
-			short im[][] = prtc.parallelReadTiffUINT16(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if (bits == 16) {
+				short im[][] = prtc.parallelReadTiffUINT16(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if (bits == 32) {
-			float im[][] = prtc.parallelReadTiffFLOAT(fileName); 
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if (bits == 32) {
+				float im[][] = prtc.parallelReadTiffFLOAT(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if(bits == 64) {
-			float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if(bits == 64) {
+				float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
+			else {
+				IJ.log("Data type not supported\n");
+				return;
+			}
+			progress.finish();
+		} finally {
+			progress.abort();
 		}
-		else {
-			IJ.log("Data type not supported\n");
-			return;
-		}
-		
+
 		new Opener();
 
 		ImagePlus imp = new ImagePlus(f.getName(),stack);
@@ -145,33 +152,40 @@ public class PRT {
 			return;
 		}
 
-		if(bits == 8) {
-			byte im[][] = prtc.parallelReadTiffUINT8(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
+			dims[0]*dims[1]*dims[2]*(bits/8), dims[2], "Reading "+f.getName());
+		try {
+			if(bits == 8) {
+				byte im[][] = prtc.parallelReadTiffUINT8(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if (bits == 16) {
-			short im[][] = prtc.parallelReadTiffUINT16(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if (bits == 16) {
+				short im[][] = prtc.parallelReadTiffUINT16(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if (bits == 32) {
-			float im[][] = prtc.parallelReadTiffFLOAT(fileName); 
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if (bits == 32) {
+				float im[][] = prtc.parallelReadTiffFLOAT(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else if(bits == 64) {
-			float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
-			for(int i = 0; i < dims[2]; i++){
-				stack.addSlice(null, im[i]);
+			else if(bits == 64) {
+				float im[][] = prtc.parallelReadTiffDOUBLE(fileName);
+				for(int i = 0; i < dims[2]; i++){
+					stack.addSlice(null, im[i]);
+				}
 			}
-		}
-		else {
-			IJ.log("Data type not supported\n");
-			return;
+			else {
+				IJ.log("Data type not supported\n");
+				return;
+			}
+			progress.finish();
+		} finally {
+			progress.abort();
 		}
 
 		ImagePlus imp = new ImagePlus(f.getName(),stack);

@@ -62,7 +62,17 @@ public class PWT {
 		int x = cImageStack.getWidth();
 		int y = cImageStack.getHeight();
 		int z = cImageStack.getSize();
-		pwtc.parallelWriteTiff(fileName, cImageObj, x, y, z, bits);
+		final long totalBytes = (long)x*y*z*(bits/8);
+		final File outFile = new File(fileName);
+		// The heuristic estimate is raised by the real growth of the output file.
+		ProgressEstimator progress = ProgressEstimator.begin("writeTiff", totalBytes,
+			z, "Writing "+outFile.getName(), () -> outFile.length() / (double)totalBytes);
+		try {
+			pwtc.parallelWriteTiff(fileName, cImageObj, x, y, z, bits);
+			progress.finish();
+		} finally {
+			progress.abort();
+		}
 		
 		/*
 		if(bits == 8) {

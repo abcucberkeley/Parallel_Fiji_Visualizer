@@ -33,6 +33,26 @@ public class PWZ {
 		int x = cImageStack.getWidth();
 		int y = cImageStack.getHeight();
 		int z = cImageStack.getSize();
-		pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "lz4", 1, bits);
+		final long totalBytes = (long)x*y*z*(bits/8);
+		final long expectedChunks = (((long)y+255)/256) * (((long)x+255)/256) * (((long)z+255)/256);
+		final File zarrDir = f;
+		// Real progress is available for zarr writes: chunk files appear flat in
+		// the zarr folder ("x.y.z" names) as they complete.
+		ProgressEstimator progress = ProgressEstimator.begin("writeZarr", totalBytes,
+			expectedChunks, "Writing "+f.getName(), () -> {
+				String[] names = zarrDir.list();
+				if(names == null) return 0.0;
+				int n = 0;
+				for(String name : names) {
+					if(!name.startsWith(".")) n++;
+				}
+				return n / (double)expectedChunks;
+			});
+		try {
+			pwzc.parallelWriteZarr(fileName, cImageObj, 0, 0, 0, y, x, z, 256, 256, 256, 1, "zstd", 1, bits);
+			progress.finish();
+		} finally {
+			progress.abort();
+		}
 	}
 }
