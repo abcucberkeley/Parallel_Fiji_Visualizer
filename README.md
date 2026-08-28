@@ -15,15 +15,14 @@ bundled inside the plugin jar and loaded automatically.
 
 ### Prerequisites
 1. An up-to-date installation of Fiji which can be downloaded from here: https://imagej.net/software/fiji/downloads
-2. OS versions supported: Windows 10 or later, Ubuntu 22.04 (other versions of Linux may work), and macOS 13 or later (Apple Silicon/M-series only. Intel Macs are not supported as of v1.3.0)
+2. OS versions supported: Windows 10 or later, Ubuntu 22.04 (Most modern Linux distributions should also work), and macOS 13 or later (Apple Silicon/M-series only. Intel Macs are not supported as of v1.3.0)
 
 ### Download and Install
 1. Download `Parallel_Fiji_Visualizer-<version>.jar` from the latest release: https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases
 2. Copy the jar into the `plugins` folder of your Fiji installation (e.g. `Fiji.app/plugins`)
 3. Launch a new session of Fiji and the plugin appears under the Plugins tab! (You can also search for "Parallel Fiji Visualizer" in the search bar)
 
-The same jar works on Windows, Linux and macOS — the native libraries for
-every platform ride inside it.
+The same jar works on Windows, Linux, and macOS.
 
 **Upgrading from 1.2.x or older:** delete the old
 `Parallel_Fiji_Visualizer_lib` folder from `Fiji.app/lib/<os>` and the old
