@@ -25,9 +25,9 @@ public class ProgressEstimatorTest {
 		String name = "Scan_Iter_0000_CamA_ch0_CAM1_stack0000_488nm_0000000msec" +
 			"_0016966725msecAbs_000x_000y_000z_0000t.tif";
 		String shown = ProgressEstimator.shorten("Reading " + name + " (12.3 GB)");
-		assertTrue("too wide: " + shown.length(), shown.length() <= 60);
-		assertTrue("start lost: " + shown, shown.startsWith("Reading Scan_Iter"));
-		assertTrue("size lost: " + shown, shown.endsWith(".tif (12.3 GB)"));
+		assertTrue("too wide: " + shown.length(), shown.length() <= 40);
+		assertTrue("start lost: " + shown, shown.startsWith("Reading Scan"));
+		assertTrue("size lost: " + shown, shown.endsWith("(12.3 GB)"));
 		assertTrue("no ellipsis: " + shown, shown.contains("..."));
 	}
 }

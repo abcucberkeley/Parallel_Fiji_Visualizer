@@ -28,7 +28,7 @@ final class ProgressEstimator {
 
 	private static final int TICK_MS = 100;
 	/** Widest status text that still leaves room for the progress bar beside it. */
-	private static final int MAX_STATUS_CHARS = 60;
+	private static final int MAX_STATUS_CHARS = 40;
 	private static final double CAP = 0.95;
 	/** Chosen so the bar reaches ~85% when exactly the estimated time has elapsed. */
 	private static final double EASE = 2.25;
