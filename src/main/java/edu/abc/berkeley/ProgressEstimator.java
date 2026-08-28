@@ -27,6 +27,8 @@ import ij.Prefs;
 final class ProgressEstimator {
 
 	private static final int TICK_MS = 100;
+	/** Widest status text that still leaves room for the progress bar beside it. */
+	private static final int MAX_STATUS_CHARS = 60;
 	private static final double CAP = 0.95;
 	/** Chosen so the bar reaches ~85% when exactly the estimated time has elapsed. */
 	private static final double EASE = 2.25;
@@ -78,7 +80,7 @@ final class ProgressEstimator {
 		final double mbps = Math.max(1.0, Prefs.get(prefsKey, DEFAULT_MBPS));
 		this.estimatedSeconds = OVERHEAD_SECONDS + totalBytes / (mbps * parallelFrac * 1e6);
 		this.startNanos = System.nanoTime();
-		IJ.showStatus(status + " (" + formatBytes(totalBytes) + ")");
+		IJ.showStatus(shorten(status + " (" + formatBytes(totalBytes) + ")"));
 		IJ.showProgress(0.0);
 		this.timer = new Timer(TICK_MS, e -> tick());
 		timer.start();
@@ -124,6 +126,22 @@ final class ProgressEstimator {
 		done = true;
 		timer.stop();
 		IJ.showProgress(1.0); // >= 1 hides the ImageJ progress bar
+	}
+
+	/**
+	 * Middle-ellipsize overlong status text. The ImageJ status line is laid
+	 * out at its preferred width with the progress bar to its right, so a
+	 * long file name widens the line until the bar sits past the window edge.
+	 * The middle is dropped because microscope file names carry their meaning
+	 * at both ends (scan id ... channel/time + extension), and the size
+	 * suffix lives at the very end.
+	 */
+	static String shorten(final String s) {
+		if (s.length() <= MAX_STATUS_CHARS) return s;
+		final int keep = MAX_STATUS_CHARS - 3;
+		final int head = (keep + 1) / 2;
+		final int tail = keep - head;
+		return s.substring(0, head) + "..." + s.substring(s.length() - tail);
 	}
 
 	private static String formatBytes(final long bytes) {
