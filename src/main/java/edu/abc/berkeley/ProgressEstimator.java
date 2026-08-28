@@ -40,6 +40,7 @@ final class ProgressEstimator {
 	private static final double EWMA_WEIGHT = 0.3;
 
 	private final String prefsKey;
+	private final String statusText;
 	private final long totalBytes;
 	private final double parallelFrac;
 	private final double estimatedSeconds;
@@ -80,7 +81,8 @@ final class ProgressEstimator {
 		final double mbps = Math.max(1.0, Prefs.get(prefsKey, DEFAULT_MBPS));
 		this.estimatedSeconds = OVERHEAD_SECONDS + totalBytes / (mbps * parallelFrac * 1e6);
 		this.startNanos = System.nanoTime();
-		IJ.showStatus(shorten(status + " (" + formatBytes(totalBytes) + ")"));
+		this.statusText = shorten(status + " (" + formatBytes(totalBytes) + ")");
+		IJ.showStatus("!" + statusText);
 		IJ.showProgress(0.0);
 		this.timer = new Timer(TICK_MS, e -> tick());
 		timer.start();
@@ -88,6 +90,12 @@ final class ProgressEstimator {
 
 	private synchronized void tick() {
 		if (done) return;
+		// Re-claim the status line every tick. The "!" priority claim is
+		// cooperative and ImageJ silently drops it whenever another thread
+		// shows a plain status (hovering the gaps of the toolbar does), so a
+		// one-time claim can be lost for the rest of the operation. Setting
+		// unchanged text is a no-op, so this neither flickers nor costs.
+		IJ.showStatus("!" + statusText);
 		final double t = (System.nanoTime() - startNanos) / 1e9;
 		double p = CAP * (1.0 - Math.exp(-EASE * t / estimatedSeconds));
 		if (observed != null) {
@@ -105,6 +113,7 @@ final class ProgressEstimator {
 		done = true;
 		timer.stop();
 		IJ.showProgress(1.0);
+		IJ.showStatus(""); // release the priority status claimed at start
 		final double seconds = (System.nanoTime() - startNanos) / 1e9;
 		// Tiny operations are too noisy to learn from.
 		if (seconds > OVERHEAD_SECONDS + 0.05 && totalBytes > 1_000_000L) {
@@ -126,6 +135,26 @@ final class ProgressEstimator {
 		done = true;
 		timer.stop();
 		IJ.showProgress(1.0); // >= 1 hides the ImageJ progress bar
+		IJ.showStatus(""); // release the priority status claimed at start
+	}
+
+	/**
+	 * Show a sign of life before the operation size is known: on a
+	 * many-slice tiff just reading the metadata walks the IFD chain several
+	 * times (possibly over a network share) and can take seconds, during
+	 * which there would otherwise be no status text and no bar. Replaced by
+	 * {@link #begin} once the size is known; if the operation is abandoned
+	 * before that, call {@link #clearStarting()}.
+	 */
+	static void starting(final String status) {
+		IJ.showStatus("!" + shorten(status));
+		IJ.showProgress(0.01);
+	}
+
+	/** Hide the {@link #starting} indicator when the operation will not run. */
+	static void clearStarting() {
+		IJ.showProgress(1.0);
+		IJ.showStatus("");
 	}
 
 	/**

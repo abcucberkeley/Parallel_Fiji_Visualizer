@@ -25,6 +25,9 @@ public class PRT {
 	public PRT(String fileName, boolean showImage){
 		//synchronized(lock) {
 		//IJ.showProgress(0);
+		// Metadata (ImageJ's IFD scan and the native getters below) can take
+		// seconds on a many-slice tiff; show life before the size is known
+		ProgressEstimator.starting("Reading " + new File(fileName).getName());
 		FileInfo[] info = Opener.getTiffFileInfo(fileName);
 		
 		// Back up method if no file info is available
@@ -55,6 +58,7 @@ public class PRT {
 		}
 		catch(Exception e) {
 			System.out.println(e);
+			ProgressEstimator.clearStarting();
 			return;
 		}
 		long sampleFormat = prtc.getTiffSampleFormat(fileName);
@@ -188,6 +192,7 @@ public class PRT {
 		}
 		catch(Exception e) {
 			System.out.println(e);
+			ProgressEstimator.clearStarting();
 			return;
 		}
 
