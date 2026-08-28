@@ -76,6 +76,10 @@
 	</ciManagement>
 
 	<properties>
+		<!-- Java language level for every compiler execution (main and test).
+		     The parent sets release=8, and the release flag overrides
+		     source/target, so this is the one property that actually decides. -->
+		<maven.compiler.release>16</maven.compiler.release>
 		<package-name>edu.abc.berkeley</package-name>
 		<main-class>edu.abc.berkeley.ParallelFijiVisualizer</main-class>
 		<license.licenseName>cc0</license.licenseName>
@@ -112,6 +116,11 @@
 			<groupId>commons-lang</groupId>
 			<artifactId>commons-lang</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>junit</groupId>
+			<artifactId>junit</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -120,8 +129,6 @@
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<configuration>
-					<source>16</source>
-					<target>16</target>
 					<compilerArgs>
 						<!-- JNI headers are generated here, never hand-maintained;
 						     src/main/native/CMakeLists.txt compiles against them. -->

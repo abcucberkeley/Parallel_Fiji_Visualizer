@@ -5,8 +5,7 @@ An efficient TIFF/Zarr reader/writer for ImageJ/Fiji that can utilize all the co
 The heavy lifting is done by the native
 [cpp-tiff](https://github.com/abcucberkeley/cpp-tiff) and
 [cpp-zarr](https://github.com/abcucberkeley/cpp-zarr) libraries, which are
-bundled inside the plugin jar and loaded automatically — no manual library
-installation required.
+bundled inside the plugin jar and loaded automatically.
 
 ## Limitations
 1. Chunky (interleaved) 8-bit RGB/RGBA tiffs are read in parallel; planar RGB tiffs and 16-bit RGB are not supported. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
@@ -52,6 +51,14 @@ The result is `target/Parallel_Fiji_Visualizer-<version>.jar` containing the
 natives for the platform you built on. Release jars are produced by a Jenkins
 pipeline that runs the `-Pnative` build on Linux, Windows and macOS and merges
 the three native sets into one cross-platform jar.
+
+### Tests
+
+`src/test/java` contains round-trip regression tests for the JNI layer and
+the Java glue (write an image natively, read it back, compare every pixel —
+including the signed/integer dtype conversions and RGB). They run during
+`mvn test -Pnative` / `mvn package -Pnative` and are skipped automatically
+when the natives are not staged.
 
 ### Developing in an IDE (Eclipse)
 

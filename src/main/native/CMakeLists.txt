@@ -82,8 +82,8 @@ message(STATUS "Native libraries will be staged into: ${STAGE_DIRS}")
 # (BUILD_SHARED_LIBS, SKIP_INSTALL_ALL, ...) which would leak into this build
 # under add_subdirectory/FetchContent.
 # ---------------------------------------------------------------------------
-set(CPP_TIFF_VERSION v1.6.0)
-set(CPP_TIFF_SHA256 fc7206eef3fe55ea66f7697eb4257458640cb1dfc11c96131faae96bc4e6d542)
+set(CPP_TIFF_VERSION v1.6.1)
+set(CPP_TIFF_SHA256 9ba31a488ffbd973b41b04528f51b18a85b237d0426c068c2f5e41f879f41703)
 set(CPP_ZARR_VERSION v1.5.2)
 set(CPP_ZARR_SHA256 c11bd910fc4f95b2a1519247fb9b88a03f24e69ffc2fa353c2cc80fbd93c542a)
 
