@@ -6,8 +6,10 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import org.junit.Assume;
 import org.junit.BeforeClass;
@@ -74,8 +76,9 @@ public class NativeRoundTripTest {
 
 	/** Rewrite the dtype in a zarr's .zarray metadata (the bytes stay put). */
 	private static void flipDtype(String zarrPath, String from, String to) throws Exception {
-		Path za = Path.of(zarrPath, ".zarray");
-		Files.writeString(za, Files.readString(za).replace(from, to));
+		Path za = Paths.get(zarrPath, ".zarray");
+		String json = new String(Files.readAllBytes(za), StandardCharsets.UTF_8);
+		Files.write(za, json.replace(from, to).getBytes(StandardCharsets.UTF_8));
 	}
 
 	private String writeZarr(Object[] slices, int bits, String name) {

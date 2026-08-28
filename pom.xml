@@ -77,9 +77,12 @@
 
 	<properties>
 		<!-- Java language level for every compiler execution (main and test).
-		     The parent sets release=8, and the release flag overrides
-		     source/target, so this is the one property that actually decides. -->
-		<maven.compiler.release>16</maven.compiler.release>
+		     The release flag overrides source/target, so this is the one
+		     property that actually decides. It must stay at 8: stock Fiji
+		     still runs on its bundled Java 8, and anything newer fails there
+		     with UnsupportedClassVersionError. (8 is also the pom-scijava
+		     default; it is pinned here so nobody raises it by accident.) -->
+		<maven.compiler.release>8</maven.compiler.release>
 		<package-name>edu.abc.berkeley</package-name>
 		<main-class>edu.abc.berkeley.ParallelFijiVisualizer</main-class>
 		<license.licenseName>cc0</license.licenseName>

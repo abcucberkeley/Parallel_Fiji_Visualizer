@@ -6,8 +6,10 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import org.junit.Assume;
 import org.junit.BeforeClass;
@@ -57,7 +59,7 @@ public class PluginReadTest {
 	/** Overwrite the "ImageJ" marker in a tiff's description tag (same length). */
 	private static void scrubImageJMarker(String path) throws RuntimeException {
 		try {
-			byte[] bytes = Files.readAllBytes(Path.of(path));
+			byte[] bytes = Files.readAllBytes(Paths.get(path));
 			byte[] marker = "ImageJ".getBytes("US-ASCII");
 			for (int i = 0; i <= bytes.length - marker.length; i++) {
 				boolean match = true;
@@ -65,7 +67,7 @@ public class PluginReadTest {
 					if (bytes[i + j] != marker[j]) { match = false; break; }
 				if (match) bytes[i] = 'X';
 			}
-			Files.write(Path.of(path), bytes);
+			Files.write(Paths.get(path), bytes);
 		}
 		catch (Exception e) {
 			throw new RuntimeException(e);
@@ -152,8 +154,9 @@ public class PluginReadTest {
 		short[][] slices = shortSlices();
 		String path = new File(tmp.getRoot(), "i16.zarr").getPath();
 		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
-		Path za = Path.of(path, ".zarray");
-		Files.writeString(za, Files.readString(za).replace("<u2", "<i2"));
+		Path za = Paths.get(path, ".zarray");
+		String json = new String(Files.readAllBytes(za), StandardCharsets.UTF_8);
+		Files.write(za, json.replace("<u2", "<i2").getBytes(StandardCharsets.UTF_8));
 
 		ImagePlus imp = new PRZ(path, false).getImp();
 		assertNotNull("PRZ produced no image", imp);
