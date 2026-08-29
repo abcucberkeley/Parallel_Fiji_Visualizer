@@ -16,6 +16,7 @@ bundled inside the plugin jar and loaded automatically.
 ### Prerequisites
 1. An up-to-date installation of Fiji which can be downloaded from here: https://imagej.net/software/fiji/downloads
 2. OS versions supported: Windows 10 or later, Ubuntu 22.04 (Most modern Linux distributions should also work), and macOS 13 or later (Apple Silicon/M-series only. Intel Macs are not supported as of v1.3.0)
+3. **On Macs, use the Apple silicon Fiji download.** The classic/"stable" Fiji ships an Intel Java and runs through Rosetta even on M-series Macs, so it cannot load the plugin's ARM natives (the plugin will show an error explaining this)
 
 ### Download and Install
 1. Download `Parallel_Fiji_Visualizer-<version>.jar` from the latest release: https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases

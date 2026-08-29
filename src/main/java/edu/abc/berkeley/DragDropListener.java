@@ -30,6 +30,25 @@ class DragDropListener implements DropTargetListener {
         return Files.isReadable(path);
 	}
 
+	/**
+	 * Run a reader on its own thread and surface anything it throws as a
+	 * dialog: these threads have no other exception handler, so without this
+	 * a failure (e.g. natives that cannot load) dies silently in the console.
+	 */
+	private static void openInBackground(Runnable open) {
+		new Thread(() -> {
+			try {
+				open.run();
+			}
+			catch (Throwable t) {
+				ProgressEstimator.clearStarting();
+				t.printStackTrace();
+				String msg = t.getMessage() != null ? t.getMessage() : t.toString();
+				IJ.error("Parallel Fiji Visualizer", msg);
+			}
+		}).start();
+	}
+
     @Override
     public void drop(DropTargetDropEvent event) {
 
@@ -64,15 +83,13 @@ class DragDropListener implements DropTargetListener {
                     	
                     	if (file.isDirectory()) {
                     		if(fName.endsWith(".zarr")) {
-                    			new Thread(() -> {
-	                    			new PRZ(fName);
-	                        	}).start();
+                    			openInBackground(() -> new PRZ(fName));
                     		}
                     		else {
-                    			new Thread(() -> {
+                    			openInBackground(() -> {
                     				ImagePlus nStack = ParallelFolderOpener.open(null, fName);
                     				if(nStack != null) nStack.show();
-	                        	}).start();
+                    			});
                     		}
                     		continue;
                     	}
@@ -86,9 +103,7 @@ class DragDropListener implements DropTargetListener {
                     		}
                     	}
                     	
-                    	if (file.isFile()) new Thread(() -> {
-                    		new PRT(fName);
-                    	}).start();
+                    	if (file.isFile()) openInBackground(() -> new PRT(fName));
                     	
                     	//else if (file.isFile()) new PRT(fName);
                         // Print out the file path

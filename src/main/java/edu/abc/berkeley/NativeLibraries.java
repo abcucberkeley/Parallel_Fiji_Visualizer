@@ -67,6 +67,12 @@ final class NativeLibraries {
 			return;
 		}
 
+		if (platform.equals("osx_64")) {
+			throw new UnsatisfiedLinkError("The mac natives are Apple-silicon (arm64) only, but this " +
+				"Fiji is running an Intel (x86_64) Java -- the classic Fiji build does this even on " +
+				"M-series Macs, through Rosetta. Please use the Apple-silicon Fiji download " +
+				"(or run Fiji with an ARM Java).");
+		}
 		throw new UnsatisfiedLinkError("No native libraries found for platform " + platform +
 			": none bundled in the jar, no target/natives/" + platform +
 			" staging tree (run: mvn process-classes -Pnative), and -Dpfv.natives.dir is not set.");
