@@ -18,8 +18,10 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import ij.ImagePlus;
+import ij.ParallelVirtualStack;
 import ij.io.FileSaver;
 import ij.process.ColorProcessor;
+import ij.process.ImageProcessor;
 
 /**
  * End-to-end regression tests for the Java glue: PRT/PRZ must turn files into
@@ -170,6 +172,67 @@ public class PluginReadTest {
 		for (int i = 0; i < 5; i++) {
 			double measured = imp.getCalibration().getCValue(raw[i] & 0xFFFF);
 			assertEquals("index " + i, slices[0][i], measured, 0.0);
+		}
+	}
+
+	/**
+	 * A z-window read through PRZ's windowed constructor: this is how the
+	 * virtual stack loads one plane at a time, and it must return that plane
+	 * for every z, not just the first.
+	 */
+	@Test
+	public void zarrZWindowThroughPRZ() {
+		short[][] slices = shortSlices();
+		String path = new File(tmp.getRoot(), "zwin.zarr").getPath();
+		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
+		for (int z = 0; z < Z; z++) {
+			ImagePlus imp = new PRZ(path, 0, 0, z, H, W, z + 1, false).getImp();
+			assertNotNull("window z=" + z + " produced no image", imp);
+			assertEquals("window z=" + z, 1, imp.getStackSize());
+			assertArrayEquals("window z=" + z, slices[z], (short[]) imp.getStack().getPixels(1));
+		}
+	}
+
+	/** Exactly what Fiji does to show slice n of a zarr too large for the heap. */
+	@Test
+	public void zarrVirtualStackSlicesThroughParallelVirtualStack() {
+		short[][] slices = shortSlices();
+		String path = new File(tmp.getRoot(), "virt.zarr").getPath();
+		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
+		ParallelVirtualStack stack = new ParallelVirtualStack(W, H, Z, null, path);
+		stack.setBitDepth(16);
+		assertEquals(Z, stack.getSize());
+		for (int n = 1; n <= Z; n++) {
+			ImageProcessor ip = stack.getProcessor(n);
+			assertEquals("slice " + n, W, ip.getWidth());
+			assertEquals("slice " + n, H, ip.getHeight());
+			assertArrayEquals("slice " + n, slices[n - 1], (short[]) ip.getPixels());
+		}
+	}
+	/**
+	 * The virtual stack fetches planes in aligned blocks and keeps the current
+	 * and previous block: scrolling forward, backward and jumping must all
+	 * return the right planes, with only the expected block reads.
+	 */
+	@Test
+	public void zarrVirtualStackBlockCache() {
+		final int nz = 6;
+		short[][] slices = new short[nz][W * H];
+		for (int s = 0; s < nz; s++)
+			for (int i = 0; i < W * H; i++)
+				slices[s][i] = (short) (i * 13 + s * 101);
+		String path = new File(tmp.getRoot(), "blocks.zarr").getPath();
+		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, nz, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
+		ParallelVirtualStack stack = new ParallelVirtualStack(W, H, nz, null, path);
+		stack.setBitDepth(16);
+		stack.setMaxBlockPlanes(2); // blocks {1,2} {3,4} {5,6}
+
+		int[] order         = { 1, 2, 3, 4, 5, 6,   6, 5, 4, 3, 2, 1,   5 };
+		int[] expectedReads = { 1, 1, 2, 2, 3, 3,   3, 3, 3, 3, 4, 4,   5 };
+		for (int i = 0; i < order.length; i++) {
+			int n = order[i];
+			assertArrayEquals("slice " + n, slices[n - 1], (short[]) stack.getProcessor(n).getPixels());
+			assertEquals("block reads after step " + i + " (slice " + n + ")", expectedReads[i], stack.getBlockReads());
 		}
 	}
 }

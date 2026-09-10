@@ -27,6 +27,87 @@ public class ParallelVirtualStack extends ImageStack {
 	private int width;
 	private int height;
 
+	// --- Block cache ---------------------------------------------------------
+	// Reading K consecutive planes costs little more than reading one: the
+	// chunk row (256 planes deep for typical zarrs) must be decompressed either
+	// way, and each extra plane only adds its copy-out. Measured on a
+	// 11985x48696x1100 uint16 zarr with 32 cores: 20 s for 1 plane, 28.6 s for
+	// 8, 80 s for 32. So planes are fetched in aligned blocks and served from
+	// memory while the user scrolls. The previous block is kept as well, so
+	// stepping back across a block boundary is free.
+	private int maxBlockPlanes = 16;   // caps the stall of a single fetch
+	private ImagePlus block, previousBlock;
+	private int blockStart = -1, previousBlockStart = -1;   // 0-based first plane
+	private int blockReads = 0;
+
+	/** Upper limit on planes fetched per block read (default 16); free memory may lower it. */
+	public void setMaxBlockPlanes(int planes) {
+		maxBlockPlanes = Math.max(1, planes);
+	}
+
+	/** Number of block reads performed so far (diagnostics and tests). */
+	public int getBlockReads() {
+		return blockReads;
+	}
+
+	/**
+	 * Planes per block: a fixed fraction of the heap, rounded down to a power
+	 * of two so aligned blocks never straddle a chunk row. Sizing from the
+	 * maximum heap (not the free heap) keeps the block size constant for the
+	 * life of the stack, so blocks keep lining up and the previous block stays
+	 * reusable. Two blocks may be held plus the JNI copy of an incoming one.
+	 */
+	private int planesPerBlock() {
+		long bytesPerPixel = Math.max(1, bitDepth / 8);
+		long planeBytes = (long) getWidth() * getHeight() * bytesPerPixel;
+		long budget = Runtime.getRuntime().maxMemory() / 6;
+		long k = Math.max(1, Math.min(maxBlockPlanes, budget / Math.max(1, planeBytes)));
+		return Integer.highestOneBit((int) k);
+	}
+
+	private ImagePlus readBlock(int plane, int start, int end) {
+		return new PRZ(path+names[plane], 0, 0, start, height, width, end, false).getImp();
+	}
+
+	/** The in-memory block holding plane n (1-based), reading it if needed. */
+	private ImagePlus blockFor(int n) {
+		int plane = n - 1;
+		if (block != null && plane >= blockStart && plane < blockStart + block.getStackSize())
+			return block;
+		if (previousBlock != null && plane >= previousBlockStart
+				&& plane < previousBlockStart + previousBlock.getStackSize()) {
+			ImagePlus b = previousBlock;
+			int start = previousBlockStart;
+			previousBlock = block;
+			previousBlockStart = blockStart;
+			block = b;
+			blockStart = start;
+			return block;
+		}
+		previousBlock = block;   // the block evicted here becomes garbage before the read allocates
+		previousBlockStart = blockStart;
+		block = null;
+		blockReads++;
+		for (;;) {
+			int k = planesPerBlock();
+			int start = (plane / k) * k;
+			int end = Math.min(start + k, nSlices);
+			try {
+				block = readBlock(plane, start, end);
+				blockStart = start;
+				return block;
+			}
+			catch (OutOfMemoryError e) {
+				if (k == 1) throw e;
+				// Not enough heap for blocks this size: halve it for the rest
+				// of the session and try again.
+				maxBlockPlanes = k / 2;
+				previousBlock = null;
+				System.gc();
+			}
+		}
+	}
+
 
 	
 	/** Default constructor. */
@@ -187,13 +268,13 @@ public class ParallelVirtualStack extends ImageStack {
 			return ip;
 		}
 		n = translate(n);  // update n for hyperstacks not in the default CZT order
-		Opener opener = new Opener();
-		opener.setSilentMode(true);
 		IJ.redirectErrorMessages(true);
-		// Matt TESTING
-		//ImagePlus imp = opener.openImage(path+names[n-1]);
-		PRZ prz = new PRZ(path+names[n-1], 0, 0, n-1, height, width, n, false);
-		ImagePlus imp = prz.getImp(); 
+		ImagePlus imp;
+		int sliceInBlock;
+		synchronized (this) {
+			imp = blockFor(n);
+			sliceInBlock = n - blockStart;
+		}
 		IJ.redirectErrorMessages(false);
 		ImageProcessor ip = null;
 		int depthThisImage = 0;
@@ -212,7 +293,7 @@ public class ParallelVirtualStack extends ImageStack {
 					labels[n-1] = "Label: "+sliceLabel;
 			}
 			depthThisImage = imp.getBitDepth();
-			ip = imp.getProcessor();
+			ip = imp.getStack().getProcessor(sliceInBlock);
 			ip.setOverlay(imp.getOverlay());
 			properties = imp.getProperty("FHT")!=null?imp.getProperties():null;
 		} else {
