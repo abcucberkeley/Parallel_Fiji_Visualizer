@@ -64,11 +64,11 @@ public class PRZ {
 					byte im[][];
 					if(dtypeKind == 'i') {
 						// Signed bytes are shifted to 0-255; a calibration maps them back
-						im = przc.parallelReadZarrINT8(fileName,startX,startY,startZ,endX,endY,endZ);
+						im = przc.parallelReadZarrINT8(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 						int8Cal = true;
 					}
 					else {
-						im = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,endX,endY,endZ);
+						im = przc.parallelReadZarrUINT8(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 					}
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
@@ -78,11 +78,11 @@ public class PRZ {
 					short im[][];
 					if(dtypeKind == 'i') {
 						// Shifted to 0-65535; the signed-16 calibration maps back
-						im = przc.parallelReadZarrINT16(fileName,startX,startY,startZ,endX,endY,endZ);
+						im = przc.parallelReadZarrINT16(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
 						int16Cal = true;
 					}
 					else {
-						im = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,endX,endY,endZ);
+						im = przc.parallelReadZarrUINT16(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
 					}
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
@@ -90,9 +90,9 @@ public class PRZ {
 				}
 				else if (bits == 32) {
 					float im[][];
-					if(dtypeKind == 'i') im = przc.parallelReadZarrINT32(fileName,startX,startY,startZ,endX,endY,endZ);
-					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT32(fileName,startX,startY,startZ,endX,endY,endZ);
-					else im = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,endX,endY,endZ);
+					if(dtypeKind == 'i') im = przc.parallelReadZarrINT32(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT32(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+					else im = przc.parallelReadZarrFLOAT(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
@@ -100,9 +100,9 @@ public class PRZ {
 				else if(bits == 64) {
 					// ImageJ has no double or 64-bit integer type; all become float
 					float im[][];
-					if(dtypeKind == 'i') im = przc.parallelReadZarrINT64(fileName,startX,startY,startZ,endX,endY,endZ);
-					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT64(fileName,startX,startY,startZ,endX,endY,endZ);
-					else im = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,endX,endY,endZ);
+					if(dtypeKind == 'i') im = przc.parallelReadZarrINT64(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+					else if(dtypeKind == 'u') im = przc.parallelReadZarrUINT64(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+					else im = przc.parallelReadZarrDOUBLE(fileName,startX,startY,startZ,endX,endY,endZ, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}

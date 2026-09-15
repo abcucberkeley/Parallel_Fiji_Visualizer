@@ -3,6 +3,7 @@ package edu.abc.berkeley;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -218,5 +219,26 @@ public class NativeRoundTripTest {
 			if (!n.startsWith(".")) chunkFiles++;
 		long expected = ((H + CHUNK - 1) / CHUNK) * ((W + CHUNK - 1) / CHUNK) * ((Z + CHUNK - 1) / CHUNK);
 		assertEquals(expected, chunkFiles);
+	}
+	/** Caller-allocated planes are filled in place and returned as-is. */
+	@Test
+	public void tiffReadsIntoPreallocatedPlanes() {
+		short[][] slices = shortSlices();
+		String path = new File(tmp.getRoot(), "dest.tif").getPath();
+		writer.parallelWriteTiff(path, slices, W, H, Z, 16);
+		short[][] dest = ParallelReadNative.newShortPlanes(Z, (long) W * H);
+		short[][] back = reader.parallelReadTiffUINT16(path, dest);
+		assertSame(dest, back);
+		for (int s = 0; s < Z; s++)
+			assertArrayEquals("slice " + s, slices[s], dest[s]);
+	}
+
+	/** A destination that does not match the image must be rejected, never written past. */
+	@Test(expected = RuntimeException.class)
+	public void wrongSizedDestinationIsRejected() {
+		short[][] slices = shortSlices();
+		String path = new File(tmp.getRoot(), "badDest.tif").getPath();
+		writer.parallelWriteTiff(path, slices, W, H, Z, 16);
+		reader.parallelReadTiffUINT16(path, new short[Z][W * H - 1]);
 	}
 }

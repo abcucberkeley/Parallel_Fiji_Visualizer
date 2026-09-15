@@ -2,10 +2,10 @@
 #define PFV_JNI_MARSHAL_H
 
 #include <jni.h>
-#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 // Shared helpers for moving image data between JNI arrays and native buffers.
 // Header-only on purpose: it must not include anything from cpp-tiff or
@@ -20,37 +20,24 @@ template <> struct JniArrayTraits<int8_t> {
 	using ArrayType = jbyteArray;
 	static constexpr const char* sliceClass = "[B";
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewByteArray(n); }
-	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const int8_t* src) {
-		env->SetByteArrayRegion(a, start, len, src);
-	}
 };
 
 template <> struct JniArrayTraits<int16_t> {
 	using ArrayType = jshortArray;
 	static constexpr const char* sliceClass = "[S";
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewShortArray(n); }
-	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const int16_t* src) {
-		env->SetShortArrayRegion(a, start, len, src);
-	}
 };
 
 template <> struct JniArrayTraits<float> {
 	using ArrayType = jfloatArray;
 	static constexpr const char* sliceClass = "[F";
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewFloatArray(n); }
-	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const float* src) {
-		env->SetFloatArrayRegion(a, start, len, src);
-	}
 };
 
 template <> struct JniArrayTraits<int32_t> {
 	using ArrayType = jintArray;
 	static constexpr const char* sliceClass = "[I";
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewIntArray(n); }
-	static void setRegion(JNIEnv* env, ArrayType a, jsize start, jsize len, const int32_t* src) {
-		// jint is "long" on MinGW -- a distinct type from int32_t, same 32 bits
-		env->SetIntArrayRegion(a, start, len, reinterpret_cast<const jint*>(src));
-	}
 };
 
 // Throw a java.lang.RuntimeException (no-op if an exception is already pending).
@@ -60,56 +47,150 @@ inline void throwRuntime(JNIEnv* env, const char* msg) {
 	if (cls != nullptr) env->ThrowNew(cls, msg);
 }
 
+// Copy n equally sized planes with all cores in ONE parallel region. Forking
+// a region costs a thread wake-up (milliseconds once the OpenMP threads have
+// gone to sleep), which dwarfed the copy of a 2 MB plane when done per plane:
+// a 10000-slice stack spent ~30 s in wake-ups. Callers therefore batch planes.
+// One core here copies at ~1.7 GB/s while 32 reach ~15 GB/s; tiny batches
+// stay serial.
+inline void copyPlanes(void* const* dst, const void* const* src, int64_t n, uint64_t bytes) {
+	if (n <= 0 || bytes == 0) return;
+	if ((uint64_t)n * bytes <= (1u << 20)) {
+		for (int64_t k = 0; k < n; k++) memcpy(dst[k], src[k], (size_t)bytes);
+		return;
+	}
+	const uint64_t chunk = 256u << 10;
+	const int64_t chunksPerPlane = (int64_t)((bytes + chunk - 1) / chunk);
+	const int64_t total = n * chunksPerPlane;
+	#pragma omp parallel for schedule(static)
+	for (int64_t c = 0; c < total; c++) {
+		const int64_t k = c / chunksPerPlane;
+		const uint64_t a = (uint64_t)(c % chunksPerPlane) * chunk;
+		const uint64_t b = a + chunk < bytes ? a + chunk : bytes;
+		memcpy((char*)dst[k] + a, (const char*)src[k] + a, (size_t)(b - a));
+	}
+}
+
+// Planes per batch: about 256 MB, at least one plane, at most 4096 planes
+// (each batch member holds a JNI local reference while pinned).
+inline uint64_t planesPerBatch(uint64_t sliceBytes) {
+	const uint64_t target = 256u << 20;
+	uint64_t n = sliceBytes == 0 ? 4096 : target / sliceBytes;
+	if (n < 1) n = 1;
+	if (n > 4096) n = 4096;
+	return n;
+}
+
 // Build a T[nSlices][sliceElems] Java array from a contiguous native buffer.
-// Very large slices are copied in three batches: a single Set*ArrayRegion of
-// more than INT_MAX/2 elements fails, so the historical batching is kept.
+// Slices are allocated a batch at a time, pinned with GetPrimitiveArrayCritical
+// (nesting is allowed), filled by one parallel copy and released; nothing but
+// the critical get/release runs while a batch is pinned. Set*ArrayRegion was
+// single-threaded and could not take more than INT_MAX/2 elements per call.
+// With dest (a T[nSlices][sliceElems] allocated by the caller, e.g. from all
+// cores at once) the planes are filled in place; a dest that does not match
+// the image is rejected with an exception rather than written past.
 template <typename T>
-jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint64_t nSlices) {
+jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint64_t nSlices,
+                          jobjectArray dest = nullptr) {
 	using Traits = JniArrayTraits<T>;
-	jclass sliceCls = env->FindClass(Traits::sliceClass);
-	if (sliceCls == nullptr) return nullptr;
-	jobjectArray outer = env->NewObjectArray((jsize)nSlices, sliceCls, nullptr);
-	env->DeleteLocalRef(sliceCls);
-	if (outer == nullptr) return nullptr;
-	for (uint64_t i = 0; i < nSlices; i++) {
-		typename Traits::ArrayType slice = Traits::newArray(env, (jsize)sliceElems);
-		if (slice == nullptr) return nullptr; // OutOfMemoryError already pending
-		const T* src = data + i * sliceElems;
-		if (sliceElems <= (uint64_t)(INT_MAX / 2)) {
-			Traits::setRegion(env, slice, 0, (jsize)sliceElems, src);
-		}
-		else {
-			const int32_t batch = (int32_t)((sliceElems - 1) / 3 + 1);
-			for (int32_t j = 0; j < 3; j++) {
-				int32_t len = batch;
-				if ((uint64_t)(j + 1) * (uint64_t)batch > sliceElems) {
-					len = (int32_t)(sliceElems - (uint64_t)j * (uint64_t)batch);
+	jobjectArray outer = dest;
+	if (dest == nullptr) {
+		jclass sliceCls = env->FindClass(Traits::sliceClass);
+		if (sliceCls == nullptr) return nullptr;
+		outer = env->NewObjectArray((jsize)nSlices, sliceCls, nullptr);
+		env->DeleteLocalRef(sliceCls);
+		if (outer == nullptr) return nullptr;
+	}
+	else if ((uint64_t)env->GetArrayLength(dest) != nSlices) {
+		throwRuntime(env, "Destination planes do not match the image slice count");
+		return nullptr;
+	}
+	const uint64_t sliceBytes = sliceElems * sizeof(T);
+	const uint64_t perBatch = planesPerBatch(sliceBytes);
+	std::vector<typename Traits::ArrayType> arrays;
+	std::vector<void*> dst;
+	std::vector<const void*> src;
+	for (uint64_t start = 0; start < nSlices; start += perBatch) {
+		const uint64_t end = start + perBatch < nSlices ? start + perBatch : nSlices;
+		arrays.clear(); dst.clear(); src.clear();
+		if (env->EnsureLocalCapacity((jint)(end - start) + 4) < 0) return nullptr;
+		for (uint64_t i = start; i < end; i++) {
+			typename Traits::ArrayType slice;
+			if (dest == nullptr) {
+				slice = Traits::newArray(env, (jsize)sliceElems);
+				if (slice == nullptr) { // OutOfMemoryError already pending
+					for (auto a : arrays) env->DeleteLocalRef(a);
+					return nullptr;
 				}
-				Traits::setRegion(env, slice, j * batch, len, src + (uint64_t)j * (uint64_t)batch);
+				env->SetObjectArrayElement(outer, (jsize)i, slice);
 			}
+			else {
+				slice = (typename Traits::ArrayType)env->GetObjectArrayElement(dest, (jsize)i);
+				if (slice == nullptr || (uint64_t)env->GetArrayLength(slice) != sliceElems) {
+					if (slice != nullptr) env->DeleteLocalRef(slice);
+					for (auto a : arrays) env->DeleteLocalRef(a);
+					throwRuntime(env, "Destination plane has the wrong size for the image");
+					return nullptr;
+				}
+			}
+			arrays.push_back(slice);
 		}
-		env->SetObjectArrayElement(outer, (jsize)i, slice);
-		env->DeleteLocalRef(slice);
+		for (size_t k = 0; k < arrays.size(); k++) {
+			void* p = env->GetPrimitiveArrayCritical(arrays[k], nullptr);
+			if (p == nullptr) {
+				for (size_t j = 0; j < dst.size(); j++) env->ReleasePrimitiveArrayCritical(arrays[j], dst[j], 0);
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				return nullptr;
+			}
+			dst.push_back(p);
+			src.push_back(data + (start + k) * sliceElems);
+		}
+		copyPlanes(dst.data(), src.data(), (int64_t)dst.size(), sliceBytes);
+		for (size_t k = 0; k < dst.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], dst[k], 0);
+		for (auto a : arrays) env->DeleteLocalRef(a);
 	}
 	return outer;
 }
 
 // Copy a Java T[nSlices][sliceElems] into one contiguous native buffer
 // (malloc'd; the caller frees). elemBytes is the element size (1, 2 or 4);
-// the copy itself is type-agnostic.
+// the copy itself is type-agnostic. Batched and pinned like slicesToJava.
 inline void* slicesToNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElems,
                             uint64_t nSlices, uint64_t elemBytes) {
 	const uint64_t sliceBytes = sliceElems * elemBytes;
 	void* buf = malloc(sliceBytes * nSlices);
 	if (buf == nullptr) return nullptr;
-	for (uint64_t i = 0; i < nSlices; i++) {
-		jarray slice = (jarray)env->GetObjectArrayElement(slices, (jsize)i);
-		if (slice == nullptr) { free(buf); return nullptr; }
-		void* elems = env->GetPrimitiveArrayCritical(slice, nullptr);
-		if (elems == nullptr) { env->DeleteLocalRef(slice); free(buf); return nullptr; }
-		memcpy((char*)buf + i * sliceBytes, elems, sliceBytes);
-		env->ReleasePrimitiveArrayCritical(slice, elems, JNI_ABORT);
-		env->DeleteLocalRef(slice);
+	const uint64_t perBatch = planesPerBatch(sliceBytes);
+	std::vector<jarray> arrays;
+	std::vector<const void*> src;
+	std::vector<void*> dst;
+	for (uint64_t start = 0; start < nSlices; start += perBatch) {
+		const uint64_t end = start + perBatch < nSlices ? start + perBatch : nSlices;
+		arrays.clear(); src.clear(); dst.clear();
+		if (env->EnsureLocalCapacity((jint)(end - start) + 4) < 0) { free(buf); return nullptr; }
+		for (uint64_t i = start; i < end; i++) {
+			jarray slice = (jarray)env->GetObjectArrayElement(slices, (jsize)i);
+			if (slice == nullptr) {
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				free(buf);
+				return nullptr;
+			}
+			arrays.push_back(slice);
+		}
+		for (size_t k = 0; k < arrays.size(); k++) {
+			void* p = env->GetPrimitiveArrayCritical(arrays[k], nullptr);
+			if (p == nullptr) {
+				for (size_t j = 0; j < src.size(); j++) env->ReleasePrimitiveArrayCritical(arrays[j], (void*)src[j], JNI_ABORT);
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				free(buf);
+				return nullptr;
+			}
+			src.push_back(p);
+			dst.push_back((char*)buf + (start + k) * sliceBytes);
+		}
+		copyPlanes(dst.data(), src.data(), (int64_t)src.size(), sliceBytes);
+		for (size_t k = 0; k < src.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], (void*)src[k], JNI_ABORT);
+		for (auto a : arrays) env->DeleteLocalRef(a);
 	}
 	return buf;
 }

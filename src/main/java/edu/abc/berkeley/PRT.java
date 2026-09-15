@@ -70,7 +70,7 @@ public class PRT {
 			if(samplesPerPixel > 1) {
 				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
 				if(bits == 8) {
-					int im[][] = prtc.parallelReadTiffRGB8(fileName);
+					int im[][] = prtc.parallelReadTiffRGB8(fileName, ParallelReadNative.newIntPlanes(dims[2], dims[0]*dims[1]));
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
@@ -84,11 +84,11 @@ public class PRT {
 				byte im[][];
 				if(sampleFormat == 2) {
 					// Signed bytes are shifted to 0-255; a calibration maps them back
-					im = prtc.parallelReadTiffINT8(fileName);
+					im = prtc.parallelReadTiffINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 					int8Cal = true;
 				}
 				else {
-					im = prtc.parallelReadTiffUINT8(fileName);
+					im = prtc.parallelReadTiffUINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
@@ -97,17 +97,17 @@ public class PRT {
 			else if (bits == 16) {
 				// Signed 16-bit data is shifted natively; the FileInfo-based
 				// calibration maps the values back
-				short im[][] = sampleFormat == 2 ? prtc.parallelReadTiffINT16(fileName)
-					: prtc.parallelReadTiffUINT16(fileName);
+				short im[][] = sampleFormat == 2 ? prtc.parallelReadTiffINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]))
+					: prtc.parallelReadTiffUINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
 			}
 			else if (bits == 32) {
 				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName);
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName);
-				else im = prtc.parallelReadTiffFLOAT(fileName);
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else im = prtc.parallelReadTiffFLOAT(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
@@ -115,9 +115,9 @@ public class PRT {
 			else if(bits == 64) {
 				// ImageJ has no double or 64-bit integer type; all become float
 				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName);
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName);
-				else im = prtc.parallelReadTiffDOUBLE(fileName);
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else im = prtc.parallelReadTiffDOUBLE(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
@@ -205,7 +205,7 @@ public class PRT {
 			if(samplesPerPixel > 1) {
 				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
 				if(bits == 8) {
-					int im[][] = prtc.parallelReadTiffRGB8(fileName);
+					int im[][] = prtc.parallelReadTiffRGB8(fileName, ParallelReadNative.newIntPlanes(dims[2], dims[0]*dims[1]));
 					for(int i = 0; i < dims[2]; i++){
 						stack.addSlice(null, im[i]);
 					}
@@ -219,11 +219,11 @@ public class PRT {
 				byte im[][];
 				if(sampleFormat == 2) {
 					// Signed bytes are shifted to 0-255; a calibration maps them back
-					im = prtc.parallelReadTiffINT8(fileName);
+					im = prtc.parallelReadTiffINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 					int8Cal = true;
 				}
 				else {
-					im = prtc.parallelReadTiffUINT8(fileName);
+					im = prtc.parallelReadTiffUINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
 				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
@@ -233,11 +233,11 @@ public class PRT {
 				short im[][];
 				if(sampleFormat == 2) {
 					// Shifted to 0-65535; the signed-16 calibration maps back
-					im = prtc.parallelReadTiffINT16(fileName);
+					im = prtc.parallelReadTiffINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
 					int16Cal = true;
 				}
 				else {
-					im = prtc.parallelReadTiffUINT16(fileName);
+					im = prtc.parallelReadTiffUINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
 				}
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
@@ -245,9 +245,9 @@ public class PRT {
 			}
 			else if (bits == 32) {
 				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName);
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName);
-				else im = prtc.parallelReadTiffFLOAT(fileName);
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else im = prtc.parallelReadTiffFLOAT(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}
@@ -255,9 +255,9 @@ public class PRT {
 			else if(bits == 64) {
 				// ImageJ has no double or 64-bit integer type; all become float
 				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName);
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName);
-				else im = prtc.parallelReadTiffDOUBLE(fileName);
+				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
+				else im = prtc.parallelReadTiffDOUBLE(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
 				for(int i = 0; i < dims[2]; i++){
 					stack.addSlice(null, im[i]);
 				}

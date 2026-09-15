@@ -17,7 +17,7 @@ namespace {
 
 template <typename JavaT>
 jobjectArray readZarr(JNIEnv* env, jstring fileName, jlong startX, jlong startY,
-                      jlong startZ, jlong endX, jlong endY, jlong endZ)
+                      jlong startZ, jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -33,7 +33,7 @@ jobjectArray readZarr(JNIEnv* env, jstring fileName, jlong startX, jlong startY,
 		pfv::throwRuntime(env, "Parallel Zarr read failed");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	return out;
 }
@@ -42,29 +42,29 @@ jobjectArray readZarr(JNIEnv* env, jstring fileName, jlong startX, jlong startY,
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrUINT8
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarr<int8_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarr<int8_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrUINT16
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarr<int16_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarr<int16_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrFLOAT
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarr<float>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarr<float>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 // 64-bit images are converted to float: ImageStack has no double support.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrDOUBLE
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -86,7 +86,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 		pfv::throwRuntime(env, "Out of native memory converting double image to float");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	return out;
 }
@@ -98,7 +98,7 @@ namespace {
 // >= 1.5.2, whose read helper handles every u/i/f dtype generically.
 template <typename UnsignedT, typename JavaT>
 jobjectArray readZarrShifted(JNIEnv* env, jstring fileName, jlong startX, jlong startY,
-	jlong startZ, jlong endX, jlong endY, jlong endZ, UnsignedT mask)
+	jlong startZ, jlong endX, jlong endY, jlong endZ, UnsignedT mask, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -115,7 +115,7 @@ jobjectArray readZarrShifted(JNIEnv* env, jstring fileName, jlong startX, jlong 
 		return nullptr;
 	}
 	pfv::xorShiftInPlace<UnsignedT>((UnsignedT*)data, dims[0] * dims[1] * dims[2], mask);
-	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	return out;
 }
@@ -123,7 +123,7 @@ jobjectArray readZarrShifted(JNIEnv* env, jstring fileName, jlong startX, jlong 
 // 32-bit integer zarrs are converted to float for ImageJ display.
 template <typename NativeT>
 jobjectArray readZarrAsFloat(JNIEnv* env, jstring fileName, jlong startX, jlong startY,
-	jlong startZ, jlong endX, jlong endY, jlong endZ)
+	jlong startZ, jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -145,7 +145,7 @@ jobjectArray readZarrAsFloat(JNIEnv* env, jstring fileName, jlong startX, jlong 
 		pfv::throwRuntime(env, "Out of native memory converting zarr to float");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	return out;
 }
@@ -154,47 +154,47 @@ jobjectArray readZarrAsFloat(JNIEnv* env, jstring fileName, jlong startX, jlong 
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrINT8
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
 	return readZarrShifted<uint8_t, int8_t>(env, fileName, startX, startY, startZ,
-		endX, endY, endZ, (uint8_t)0x80u);
+		endX, endY, endZ, (uint8_t)0x80u, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrINT16
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
 	return readZarrShifted<uint16_t, int16_t>(env, fileName, startX, startY, startZ,
-		endX, endY, endZ, (uint16_t)0x8000u);
+		endX, endY, endZ, (uint16_t)0x8000u, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrINT32
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarrAsFloat<int32_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarrAsFloat<int32_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrUINT32
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarrAsFloat<uint32_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarrAsFloat<uint32_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 // ImageJ has no 64-bit integer type; converted to float like doubles are.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrINT64
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarrAsFloat<int64_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarrAsFloat<int64_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadZarrUINT64
 	(JNIEnv* env, jobject, jstring fileName, jlong startX, jlong startY, jlong startZ,
-	 jlong endX, jlong endY, jlong endZ)
+	 jlong endX, jlong endY, jlong endZ, jobjectArray dest)
 {
-	return readZarrAsFloat<uint64_t>(env, fileName, startX, startY, startZ, endX, endY, endZ);
+	return readZarrAsFloat<uint64_t>(env, fileName, startX, startY, startZ, endX, endY, endZ, dest);
 }
 
 // The numpy-style dtype string from the .zarray metadata, e.g. "<u2" or "<i4".

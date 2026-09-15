@@ -14,7 +14,7 @@
 
 	<groupId>edu.abc.berkeley</groupId>
 	<artifactId>Parallel_Fiji_Visualizer</artifactId>
-	<version>1.3.1</version>
+	<version>1.4.0</version>
 
 	<name>Parallel Fiji Visualizer</name>
 	<description>A parallel TIFF/Zarr reader/writer for ImageJ/Fiji that can use all CPU cores.</description>

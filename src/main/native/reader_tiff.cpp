@@ -26,7 +26,7 @@ uint64_t* readDims(const char* fName) {
 }
 
 template <typename JavaT>
-jobjectArray readTiff(JNIEnv* env, jstring fileName) {
+jobjectArray readTiff(JNIEnv* env, jstring fileName, jobjectArray dest) {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
 	void* data = readTiffParallelWrapperNoXYFlip(fName);
@@ -38,7 +38,7 @@ jobjectArray readTiff(JNIEnv* env, jstring fileName) {
 		pfv::throwRuntime(env, "Parallel TIFF read failed");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<JavaT>(env, (const JavaT*)data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
@@ -47,26 +47,26 @@ jobjectArray readTiff(JNIEnv* env, jstring fileName) {
 } // namespace
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT8
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiff<int8_t>(env, fileName);
+	return readTiff<int8_t>(env, fileName, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT16
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiff<int16_t>(env, fileName);
+	return readTiff<int16_t>(env, fileName, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffFLOAT
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiff<float>(env, fileName);
+	return readTiff<float>(env, fileName, dest);
 }
 
 // 64-bit images are converted to float: ImageStack has no double support.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffDOUBLE
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -86,7 +86,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 		pfv::throwRuntime(env, "Out of native memory converting double image to float");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
@@ -94,7 +94,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 
 // Signed 8-bit images, shifted into 0-255 (a Java-side calibration maps back).
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT8
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -108,7 +108,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 		return nullptr;
 	}
 	pfv::xorShiftInPlace<uint8_t>((uint8_t*)data, dims[0] * dims[1] * dims[2], (uint8_t)0x80u);
-	jobjectArray out = pfv::slicesToJava<int8_t>(env, (const int8_t*)data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<int8_t>(env, (const int8_t*)data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
@@ -116,7 +116,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 
 // Signed 16-bit images, shifted into 0-65535 (ImageJ's signed-16 convention).
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT16
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -130,7 +130,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 		return nullptr;
 	}
 	pfv::xorShiftInPlace<uint16_t>((uint16_t*)data, dims[0] * dims[1] * dims[2], (uint16_t)0x8000u);
-	jobjectArray out = pfv::slicesToJava<int16_t>(env, (const int16_t*)data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<int16_t>(env, (const int16_t*)data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
@@ -140,7 +140,7 @@ namespace {
 
 // 32-bit integer images are converted to float for ImageJ display.
 template <typename NativeT>
-jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName) {
+jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName, jobjectArray dest) {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
 	NativeT* raw = (NativeT*)readTiffParallelWrapperNoXYFlip(fName);
@@ -159,7 +159,7 @@ jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName) {
 		pfv::throwRuntime(env, "Out of native memory converting image to float");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<float>(env, data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
@@ -168,33 +168,33 @@ jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName) {
 } // namespace
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT32
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiffAsFloat<int32_t>(env, fileName);
+	return readTiffAsFloat<int32_t>(env, fileName, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT32
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiffAsFloat<uint32_t>(env, fileName);
+	return readTiffAsFloat<uint32_t>(env, fileName, dest);
 }
 
 // ImageJ has no 64-bit integer type; converted to float like doubles are.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffINT64
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiffAsFloat<int64_t>(env, fileName);
+	return readTiffAsFloat<int64_t>(env, fileName, dest);
 }
 
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffUINT64
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
-	return readTiffAsFloat<uint64_t>(env, fileName);
+	return readTiffAsFloat<uint64_t>(env, fileName, dest);
 }
 
 // Chunky (interleaved) 8-bit RGB/RGBA, packed into ImageJ int-based RGB pixels.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffRGB8
-	(JNIEnv* env, jobject, jstring fileName)
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dest)
 {
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
@@ -216,7 +216,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 		pfv::throwRuntime(env, "Out of native memory packing RGB image");
 		return nullptr;
 	}
-	jobjectArray out = pfv::slicesToJava<int32_t>(env, data, dims[0] * dims[1], dims[2]);
+	jobjectArray out = pfv::slicesToJava<int32_t>(env, data, dims[0] * dims[1], dims[2], dest);
 	free(data);
 	free(dims);
 	return out;
