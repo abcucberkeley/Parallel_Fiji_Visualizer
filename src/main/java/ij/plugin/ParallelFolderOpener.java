@@ -9,6 +9,8 @@ import java.util.*;
 
 import edu.abc.berkeley.PRT;
 import edu.abc.berkeley.PRZ;
+import edu.abc.berkeley.ProgressEstimator;
+import edu.abc.berkeley.SeriesLayout;
 import ij.*;
 import ij.io.*;
 import ij.gui.*;
@@ -23,7 +25,7 @@ public class ParallelFolderOpener implements PlugIn {
 	private static final int MAX_SEPARATE = 40;
 	private static final String DIR_KEY = "import.sequence.dir";
 	private static final String[] types = {"default", "16-bit", "32-bit", "RGB"};
-	private static String[] excludedTypes = {".txt", ".lut", ".roi", ".pty", ".hdr", ".java", ".ijm", ".py", ".js", ".bsh", ".xml"};
+	private static String[] excludedTypes = {".txt", ".lut", ".roi", ".pty", ".hdr", ".java", ".ijm", ".py", ".js", ".bsh", ".xml", ".json", ".mat", ".csv", ".log"};
 	private static boolean staticSortFileNames = true;
 	private static boolean staticOpenAsVirtualStack;
 	private boolean convertToRGB;
@@ -47,6 +49,8 @@ public class ParallelFolderOpener implements PlugIn {
 	private int step = 1;
 	private double scale = 100.0;
 	private boolean openAsSeparateImages;
+	/** Open as a hyperstack when the file names describe channels x time points. */
+	private boolean detectHyperstack = true;
 	
 
 	
@@ -94,6 +98,8 @@ public class ParallelFolderOpener implements PlugIn {
 		openAsVirtualStack = options.contains("virtual") || options.contains("use");
 		if (options.contains("noMetaSort")) 
 			sortByMetaData = false;
+		if (options.contains("nohyperstack"))
+			detectHyperstack = false;
 		bitDepth = (int)Tools.getNumberFromList(options,"bitdepth=",0);
 		filter = Macro.getValue(options, "filter", "");
 		this.start = (int)Tools.getNumberFromList(options,"start=",1);
@@ -163,7 +169,7 @@ public class ParallelFolderOpener implements PlugIn {
 		//remove subdirectories from list
 		ArrayList fileList = new ArrayList();
 		for (int i=0; i<list.length; i++) {
-			File f = (new File(directory+list[i]));
+			File f = new File(directory, list[i]);
 			//Matt
 			if (!f.isDirectory() || list[i].endsWith(".zarr"))
 				fileList.add(list[i]);
@@ -200,6 +206,9 @@ public class ParallelFolderOpener implements PlugIn {
 		if (this.nFiles==0)
 			this.nFiles = list.length;
 		boolean dicomImages = false;
+		SeriesLayout layout = null;
+		int firstZ = -1;
+		boolean uniformZ = true;
 		try {
 			for (int i=0; i<list.length; i++) {
 				Opener opener = new Opener();
@@ -353,19 +362,36 @@ public class ParallelFolderOpener implements PlugIn {
 			*/
 			
 			
+			// Matt: the files actually opened (start/count/step applied), so the
+			// hyperstack layout can be detected and the files reordered time
+			// point outer, channel inner before anything is read
+			ArrayList<String> selected = new ArrayList<String>();
+			for (int i=this.start-1, k=0; i<list.length && selected.size()<this.nFiles; i++, k++) {
+				if (k%this.step==0) selected.add(list[i]);
+			}
+			String[] files = selected.toArray(new String[0]);
+			if (detectHyperstack && !openAsSeparateImages) {
+				layout = SeriesLayout.detect(files);
+				if (layout!=null) files = layout.order;
+			}
+			// Matt: slice labels carry only what tells the files apart, so the
+			// window subtitle (60 characters at most) shows the tile/time point
+			// of the current slice instead of a shared prefix
+			String[] labels = SeriesLayout.distinguishingNames(files);
+			ProgressEstimator.beginBatch(files.length);
+			try {
 			// open images as stack
-			for (int i=this.start-1; i<list.length; i++) {
-				if ((counter++%this.step)!=0)
-					continue;
+			for (int i=0; i<files.length; i++) {
+				ProgressEstimator.batchItem(i+1);
 				Opener opener = new Opener();
 				opener.setSilentMode(true);
 				IJ.redirectErrorMessages(true);
-				if ("RoiSet.zip".equals(list[i])) {
-					IJ.open(directory+list[i]);
+				if ("RoiSet.zip".equals(files[i])) {
+					IJ.open(directory+files[i]);
 					imp = null;
 				} else if (!openAsVirtualStack||stack==null) {
 					//imp = opener.openImage(directory, list[i]);
-					String cFile = directory+File.separator+list[i]; 
+					String cFile = directory+File.separator+files[i]; 
 					if(cFile.endsWith(".tif")) {
 						PRT prt = new PRT(cFile,false);
 						imp = prt.getImp();
@@ -374,8 +400,12 @@ public class ParallelFolderOpener implements PlugIn {
 						PRZ prz = new PRZ(cFile,false);
 						imp = prz.getImp();
 					}
-					else imp = opener.openImage(directory, list[i]);
+					else imp = opener.openImage(directory, files[i]);
 					stackSize = imp!=null?imp.getStackSize():1;
+					if (imp!=null) {
+						if (firstZ<0) firstZ = stackSize;
+						else if (stackSize!=firstZ) uniformZ = false;
+					}
 				}
 				IJ.redirectErrorMessages(false);
 				if (imp!=null && stack==null) {
@@ -422,11 +452,11 @@ public class ParallelFolderOpener implements PlugIn {
 						imp2.setProcessor(ip2);
 						imp = imp2;
 					} else {
-						IJ.log(list[i] + ": wrong size; "+width+"x"+height+" expected, "+imp.getWidth()+"x"+imp.getHeight()+" found");
+						IJ.log(files[i] + ": wrong size; "+width+"x"+height+" expected, "+imp.getWidth()+"x"+imp.getHeight()+" found");
 						continue;
 					}
 				}
-				String label = imp.getTitle();
+				String label = labels[i];
 				if (stackSize==1) {
 					String info = (String)imp.getProperty("Info");
 					if (info!=null) {
@@ -456,9 +486,9 @@ public class ParallelFolderOpener implements PlugIn {
 				if (openAsVirtualStack) { 
 					if (fileInfoStack)
 						//Matt
-						openAsFileInfoStack((FileInfoVirtualStack)stack, directory+File.separator+list[i]);
+						openAsFileInfoStack((FileInfoVirtualStack)stack, directory+File.separator+files[i]);
 					else
-						((VirtualStack)stack).addSlice(list[i]);
+						((VirtualStack)stack).addSlice(files[i]);
 				} else {
 					for (int slice=1; slice<=stackSize; slice++) {
 						int bitDepth2 = imp.getBitDepth();
@@ -499,13 +529,12 @@ public class ParallelFolderOpener implements PlugIn {
 					}
 				}
 				count++;
-				IJ.showStatus("!"+count+"/"+this.nFiles);
-				IJ.showProgress(count, this.nFiles);
-				if (count>=this.nFiles) 
-					break;
 				if (IJ.escapePressed())
 					{IJ.beep(); break;}
 			}  // open images as stack
+			} finally {
+				ProgressEstimator.endBatch();
+			}
 			
 		} catch(OutOfMemoryError e) {
 			IJ.outOfMemory("FolderOpener");
@@ -573,6 +602,22 @@ public class ParallelFolderOpener implements PlugIn {
 				if (info1!=null)
 					imp2.setProperty("Info", info1);
 			}
+			// Matt: the file names described a channels x frames grid, so show
+			// the stack as a hyperstack with channel and frame sliders. The
+			// slices were added file by file (z fastest, then channel, then
+			// time point), which is ImageJ's "xyzct" order; files that differ
+			// only in other tokens (tiles) sit one after another along z.
+			if (layout!=null && uniformZ && firstZ>0) {
+				int zSlices = layout.filesPerCell*firstZ;
+				if (!stack.isVirtual() && stack.size()==layout.channels*zSlices*layout.frames) {
+					String mode = layout.channels<=7 ? "Composite" : "Color";
+					imp2 = HyperStackConverter.toHyperStack(imp2, layout.channels, zSlices, layout.frames, "xyzct", mode);
+					imp2.setTitle(title);
+				} else if (stack.isVirtual() && firstZ==1 && layout.filesPerCell==1 && stack.size()==layout.channels*layout.frames) {
+					imp2.setDimensions(layout.channels, 1, layout.frames);
+					imp2.setOpenAsHyperStack(true);
+				}
+			}
 			if (arg==null && !saveImage) {
 				String time = (System.currentTimeMillis()-t0)/1000.0 + " seconds";
 				if (openAsSeparateImages && imp2.getStackSize()<=MAX_SEPARATE)
@@ -608,6 +653,8 @@ public class ParallelFolderOpener implements PlugIn {
 				options = options + " scale=" + scale;				
 			if (!sortByMetaData)
 				options = options + " noMetaSort";
+			if (!detectHyperstack)
+				options = options + " nohyperstack";
 			String dir = Recorder.fixPath(directory);
    			Recorder.recordCall("imp = FolderOpener.open(\""+dir+"\", \""+options+"\");");
 		}
@@ -697,6 +744,7 @@ public class ParallelFolderOpener implements PlugIn {
 		gd.addNumericField("Scale:", this.scale, 0, 6, "%");
 		gd.addCheckbox("Sort names numerically", sortFileNames);
 		gd.addCheckbox("Use virtual stack", openAsVirtualStack);
+		gd.addCheckbox("Open as hyperstack (channels and frames from file names)", detectHyperstack);
 		gd.addCheckbox("Open as separate images", false);		
 		gd.addHelp(IJ.URL+"/docs/menus/file.html#seq1");
 		gd.showDialog();
@@ -728,6 +776,7 @@ public class ParallelFolderOpener implements PlugIn {
 		openAsVirtualStack = gd.getNextBoolean();
 		if (openAsVirtualStack)
 			scale = 100.0;
+		detectHyperstack = gd.getNextBoolean();
 		openAsSeparateImages = gd.getNextBoolean();
 		if (openAsSeparateImages)
 			openAsVirtualStack = true;

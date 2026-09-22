@@ -24,7 +24,7 @@ import ij.Prefs;
  * blocked: a Swing timer reads the clock ten times a second, so the estimator
  * cannot affect read/write speed.
  */
-final class ProgressEstimator {
+public final class ProgressEstimator {
 
 	private static final int TICK_MS = 100;
 	/** Widest status text that still leaves room for the progress bar beside it. */
@@ -38,6 +38,49 @@ final class ProgressEstimator {
 	/** First-run default scales with the machine; learned rates replace it quickly. */
 	private static final double DEFAULT_MBPS = Math.min(2000.0, Math.max(100.0, 20.0 * CORES));
 	private static final double EWMA_WEIGHT = 0.3;
+
+	// --- Batch context: a folder of files opened one after another -----------
+	// The folder opener declares the batch; every estimator started inside it
+	// ends its status with "i/N" and maps its own progress onto the slice of
+	// the bar that belongs to file i, so the bar spans the whole folder.
+	private static int batchTotal = 0;
+	private static int batchIndex = 0;
+
+	/** Begin a batch of {@code total} operations. */
+	public static synchronized void beginBatch(final int total) {
+		batchTotal = Math.max(0, total);
+		batchIndex = 0;
+	}
+
+	/** About to start item {@code index} (1-based) of the batch. */
+	public static synchronized void batchItem(final int index) {
+		batchIndex = index;
+		if (batchTotal > 0) {
+			IJ.showStatus("!" + index + "/" + batchTotal);
+			IJ.showProgress((index - 1) / (double) batchTotal);
+		}
+	}
+
+	/** The batch is over: hide the bar and release the status line. */
+	public static synchronized void endBatch() {
+		batchTotal = 0;
+		batchIndex = 0;
+		IJ.showProgress(1.0);
+		IJ.showStatus("");
+	}
+
+	private static synchronized boolean inBatch() {
+		return batchTotal > 0;
+	}
+
+	private static synchronized String batchSuffix() {
+		return batchTotal > 0 ? " " + batchIndex + "/" + batchTotal : "";
+	}
+
+	/** An operation's own progress (0-1) placed on the batch bar. */
+	private static synchronized double batchProgress(final double p) {
+		return batchTotal > 0 ? (batchIndex - 1 + p) / batchTotal : p;
+	}
 
 	private final String prefsKey;
 	private final String statusText;
@@ -81,9 +124,9 @@ final class ProgressEstimator {
 		final double mbps = Math.max(1.0, Prefs.get(prefsKey, DEFAULT_MBPS));
 		this.estimatedSeconds = OVERHEAD_SECONDS + totalBytes / (mbps * parallelFrac * 1e6);
 		this.startNanos = System.nanoTime();
-		this.statusText = shorten(status + " (" + formatBytes(totalBytes) + ")");
+		this.statusText = shorten(status + " (" + formatBytes(totalBytes) + ")" + batchSuffix());
 		IJ.showStatus("!" + statusText);
-		IJ.showProgress(0.0);
+		IJ.showProgress(batchProgress(0.0));
 		this.timer = new Timer(TICK_MS, e -> tick());
 		timer.start();
 	}
@@ -103,7 +146,7 @@ final class ProgressEstimator {
 		}
 		if (p > lastShown) {
 			lastShown = p;
-			IJ.showProgress(p);
+			IJ.showProgress(batchProgress(p));
 		}
 	}
 
@@ -112,8 +155,7 @@ final class ProgressEstimator {
 		if (done) return;
 		done = true;
 		timer.stop();
-		IJ.showProgress(1.0);
-		IJ.showStatus(""); // release the priority status claimed at start
+		releaseBar();
 		final double seconds = (System.nanoTime() - startNanos) / 1e9;
 		// Tiny operations are too noisy to learn from.
 		if (seconds > OVERHEAD_SECONDS + 0.05 && totalBytes > 1_000_000L) {
@@ -134,8 +176,18 @@ final class ProgressEstimator {
 		if (done) return;
 		done = true;
 		timer.stop();
-		IJ.showProgress(1.0); // >= 1 hides the ImageJ progress bar
-		IJ.showStatus(""); // release the priority status claimed at start
+		releaseBar();
+	}
+
+	/** Hide the bar and release the status line -- unless a batch owns them. */
+	private static void releaseBar() {
+		if (inBatch()) {
+			IJ.showProgress(batchProgress(1.0));
+		}
+		else {
+			IJ.showProgress(1.0); // >= 1 hides the ImageJ progress bar
+			IJ.showStatus(""); // release the priority status claimed at start
+		}
 	}
 
 	/**
@@ -147,14 +199,13 @@ final class ProgressEstimator {
 	 * before that, call {@link #clearStarting()}.
 	 */
 	static void starting(final String status) {
-		IJ.showStatus("!" + shorten(status));
-		IJ.showProgress(0.01);
+		IJ.showStatus("!" + shorten(status + batchSuffix()));
+		IJ.showProgress(inBatch() ? batchProgress(0.01) : 0.01);
 	}
 
 	/** Hide the {@link #starting} indicator when the operation will not run. */
 	static void clearStarting() {
-		IJ.showProgress(1.0);
-		IJ.showStatus("");
+		releaseBar();
 	}
 
 	/**
