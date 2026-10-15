@@ -421,6 +421,12 @@ public class ParallelReadNative {
 		return parallelReadZarrUINT64(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
+	/**
+	 * For tests: the least a slab of a big Zarr read holds (1 GiB by default;
+	 * reads of less than twice that are done at once).
+	 */
+	static native void setZarrSlabBytes(long bytes);
+
 	/** Bits per pixel of the zarr on disk. */
 	public native long getZarrDataType(String fileName);
 

@@ -2,6 +2,7 @@ package edu.abc.berkeley;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -18,8 +19,10 @@ import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
 import ij.ParallelVirtualStack;
+import ij.io.FileInfo;
 import ij.io.FileSaver;
 import ij.process.ColorProcessor;
+import ij.process.ShortProcessor;
 
 /**
  * TIFF reading from one description of the file (getTiffInfo): reads of a
@@ -201,5 +204,27 @@ public class TiffReadTest {
 			for (int i = 0; i < W * H; i++)
 				assertEquals("slice " + z + " pixel " + i, pixels[z][i] & 0xFFFFFF, px[i] & 0xFFFFFF);
 		}
+	}
+
+	/**
+	 * cpp-tiff writes BigTIFFs, which ImageJ's own reader cannot parse (1.54f
+	 * turns them into nonsense, for some files taking half a minute): their
+	 * description must not come from ImageJ. ImageJ's own files are classic.
+	 */
+	@Test
+	public void bigTiffsAreNotScannedByImageJ() throws Exception {
+		String big = writeStack("big.tif", 3);
+		assertTrue(PRT.isBigTiff(big));
+		ImagePlus imp = new PRT(big, false).getImp();
+		FileInfo fi = imp.getOriginalFileInfo();
+		assertEquals("big.tif", fi.fileName);
+		assertEquals(tmp.getRoot().getPath(), fi.directory);
+		assertEquals(3, imp.getStackSize());
+		assertArrayEquals(TiffFixture.plane(W, H, 2, 0), (short[]) imp.getStack().getPixels(3));
+
+		String classic = new File(tmp.getRoot(), "classic.tif").getPath();
+		assertTrue(new FileSaver(new ImagePlus("classic", new ShortProcessor(W, H))).saveAsTiff(classic));
+		assertFalse(PRT.isBigTiff(classic));
+		assertFalse(PRT.isBigTiff(new File(tmp.getRoot(), "missing.tif").getPath()));
 	}
 }

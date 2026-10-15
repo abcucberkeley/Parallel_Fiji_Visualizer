@@ -50,13 +50,20 @@ bool infoFromJava(JNIEnv* env, jlongArray a, TiffInfo& info) {
 	return true;
 }
 
+// Threads for reading slices [zStart, zEnd): about one per MiB. Every core on
+// a small file is slower than a few (300 2048x2048 16-bit files: 1.08 s with
+// 48 threads, 0.32 s with 6), as each thread opens the file.
+uint64_t threadsFor(const TiffInfo& info, jlong zStart, jlong zEnd) {
+	const uint64_t slices = zEnd > zStart ? (uint64_t)(zEnd - zStart) : 1;
+	const uint64_t bytes = slices * info.x * info.y * info.samples * (info.bits / 8);
+	return (bytes + (1u << 20) - 1) >> 20;
+}
+
 // Reads the slices [zStart, zEnd) as stored, (z, y, x[, sample]) row-major,
 // after checking that their samples are elemBytes wide. On failure a Java
 // exception is pending and nullptr is returned.
-void* readSlices(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd,
-                 uint64_t elemBytes, TiffInfo& info)
+void* readSlices(JNIEnv* env, jstring fileName, const TiffInfo& info, jlong zStart, jlong zEnd, uint64_t elemBytes)
 {
-	if (!infoFromJava(env, jInfo, info)) return nullptr;
 	if (zStart < 0 || zEnd <= zStart || (uint64_t)zEnd > info.z) {
 		pfv::throwRuntime(env, "The slices to read lie outside the TIFF");
 		return nullptr;
@@ -73,52 +80,31 @@ void* readSlices(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, 
 	return raw;
 }
 
-// Interleaved samples as one plane per sample (plane s + samples*z), in blocks
-// so that a single big slice still keeps every core busy
-template <typename T>
-T* splitSamples(const T* src, uint64_t planeElems, uint64_t slices, uint64_t samples) {
-	T* dst = (T*)malloc(planeElems * slices * samples * sizeof(T));
-	if (dst == nullptr) return nullptr;
-	const uint64_t block = 1u << 16;
-	const uint64_t perPlane = (planeElems + block - 1) / block;
-	const int64_t total = (int64_t)(slices * samples * perPlane);
-	#pragma omp parallel for schedule(static)
-	for (int64_t k = 0; k < total; k++) {
-		const uint64_t p = (uint64_t)k / perPlane, b = (uint64_t)k % perPlane;
-		const uint64_t z = p / samples, s = p % samples;
-		const uint64_t i0 = b * block, i1 = i0 + block < planeElems ? i0 + block : planeElems;
-		const T* in = src + z * planeElems * samples + s;
-		T* out = dst + p * planeElems;
-		for (uint64_t i = i0; i < i1; i++) out[i] = in[i * samples];
-	}
-	return dst;
-}
-
-// Hands slices of elements already in Java's type to Java, one plane per
-// sample; frees data
-template <typename J>
-jobjectArray toJava(JNIEnv* env, const TiffInfo& info, J* data, uint64_t slices, jobjectArray dest) {
-	const uint64_t planeElems = info.x * info.y;
-	if (info.samples > 1) {
-		J* split = splitSamples(data, planeElems, slices, info.samples);
-		free(data);
-		if (split == nullptr) {
-			pfv::throwRuntime(env, "Out of native memory splitting the TIFF's samples");
-			return nullptr;
-		}
-		data = split;
-	}
-	jobjectArray out = pfv::slicesToJava<J>(env, data, planeElems, slices * info.samples, dest);
-	free(data);
+// Hands slices read as stored ((z, y, x[, sample]) row-major) to Java as D,
+// one plane per slice, or one per sample of each slice (plane s + samples*z),
+// each element converted by conv on its way; frees raw. The samples are split
+// straight into Java's arrays, with no intermediate copy of the image.
+template <typename S, typename D, typename Conv>
+jobjectArray toJava(JNIEnv* env, const TiffInfo& info, void* raw, uint64_t slices, jobjectArray dest, Conv conv) {
+	const uint64_t samples = info.samples, n = info.x * info.y;
+	std::vector<uint64_t> base(slices * samples);
+	for (uint64_t p = 0; p < base.size(); p++) base[p] = (p / samples) * n * samples + p % samples;
+	const pfv::PlaneLayout layout = { info.x, info.y, samples, info.x * samples, base.data() };
+	const S* src = (const S*)raw;
+	jobjectArray out = pfv::slicesToJavaWith<D>(env, n, base.size(), dest,
+		[&](D* const* dst, uint64_t first, uint64_t count) { pfv::fillPlanes<S, D>(dst, first, count, src, layout, conv); });
+	free(raw);
 	return out;
 }
 
 template <typename T>
 jobjectArray readTiff(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd, jobjectArray dest) {
 	TiffInfo info;
-	T* data = (T*)readSlices(env, fileName, jInfo, zStart, zEnd, sizeof(T), info);
-	if (data == nullptr) return nullptr;
-	return toJava<T>(env, info, data, (uint64_t)(zEnd - zStart), dest);
+	if (!infoFromJava(env, jInfo, info)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
+	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(T));
+	if (raw == nullptr) return nullptr;
+	return toJava<T, T>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::Cast<T, T>());
 }
 
 // Signed integers: XOR-shift the sign bit into the unsigned range ImageJ
@@ -128,11 +114,11 @@ jobjectArray readTiffShifted(JNIEnv* env, jstring fileName, jlongArray jInfo, jl
 	UnsignedT mask, jobjectArray dest)
 {
 	TiffInfo info;
-	UnsignedT* data = (UnsignedT*)readSlices(env, fileName, jInfo, zStart, zEnd, sizeof(UnsignedT), info);
-	if (data == nullptr) return nullptr;
-	const uint64_t slices = (uint64_t)(zEnd - zStart);
-	pfv::xorShiftInPlace<UnsignedT>(data, info.x * info.y * info.samples * slices, mask);
-	return toJava<JavaT>(env, info, (JavaT*)data, slices, dest);
+	if (!infoFromJava(env, jInfo, info)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
+	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(UnsignedT));
+	if (raw == nullptr) return nullptr;
+	return toJava<UnsignedT, JavaT>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::XorSign<UnsignedT, JavaT>{ mask });
 }
 
 // 32- and 64-bit integers and doubles are converted to float: ImageJ shows
@@ -140,16 +126,11 @@ jobjectArray readTiffShifted(JNIEnv* env, jstring fileName, jlongArray jInfo, jl
 template <typename NativeT>
 jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd, jobjectArray dest) {
 	TiffInfo info;
-	NativeT* raw = (NativeT*)readSlices(env, fileName, jInfo, zStart, zEnd, sizeof(NativeT), info);
+	if (!infoFromJava(env, jInfo, info)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
+	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(NativeT));
 	if (raw == nullptr) return nullptr;
-	const uint64_t slices = (uint64_t)(zEnd - zStart);
-	float* data = pfv::convertToFloat<NativeT>(raw, info.x * info.y * info.samples * slices);
-	free(raw);
-	if (data == nullptr) {
-		pfv::throwRuntime(env, "Out of native memory converting the TIFF to float");
-		return nullptr;
-	}
-	return toJava<float>(env, info, data, slices, dest);
+	return toJava<NativeT, float>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::Cast<NativeT, float>());
 }
 
 } // namespace
@@ -215,22 +196,34 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffRGB8 PFV_TIFF_READ_ARGS
 {
 	TiffInfo tinfo;
-	uint8_t* raw = (uint8_t*)readSlices(env, fileName, info, zStart, zEnd, 1, tinfo);
+	if (!infoFromJava(env, info, tinfo)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(tinfo, zStart, zEnd));
+	uint8_t* raw = (uint8_t*)readSlices(env, fileName, tinfo, zStart, zEnd, 1);
 	if (raw == nullptr) return nullptr;
 	if (tinfo.samples < 3) {
 		free(raw);
 		pfv::throwRuntime(env, "The TIFF is not an RGB image");
 		return nullptr;
 	}
-	const uint64_t slices = (uint64_t)(zEnd - zStart);
-	int32_t* data = pfv::packRgbToArgb(raw, tinfo.x * tinfo.y * slices, tinfo.samples);
+	// Packed into ImageJ RGB pixels (0xff000000 | r<<16 | g<<8 | b; alpha, if
+	// present, dropped) straight into Java's arrays
+	const uint64_t slices = (uint64_t)(zEnd - zStart), n = tinfo.x * tinfo.y, samples = tinfo.samples;
+	const uint8_t* src = raw;
+	jobjectArray out = pfv::slicesToJavaWith<int32_t>(env, n, slices, dest, [&](int32_t* const* dst, uint64_t first, uint64_t count) {
+		const uint64_t block = 1u << 16, per = (n + block - 1) / block;
+		const int64_t total = (int64_t)(count * per);
+		#pragma omp parallel for schedule(static) if(count * n * 4 > (1u << 20))
+		for (int64_t k = 0; k < total; k++) {
+			const uint64_t p = (uint64_t)k / per, i0 = ((uint64_t)k % per) * block, i1 = i0 + block < n ? i0 + block : n;
+			const uint8_t* s = src + (first + p) * n * samples;
+			int32_t* d = dst[p];
+			for (uint64_t i = i0; i < i1; i++) {
+				const uint8_t* q = s + i * samples;
+				d[i] = (int32_t)(0xFF000000u | ((uint32_t)q[0] << 16) | ((uint32_t)q[1] << 8) | (uint32_t)q[2]);
+			}
+		}
+	});
 	free(raw);
-	if (data == nullptr) {
-		pfv::throwRuntime(env, "Out of native memory packing RGB image");
-		return nullptr;
-	}
-	jobjectArray out = pfv::slicesToJava<int32_t>(env, data, tinfo.x * tinfo.y, slices, dest);
-	free(data);
 	return out;
 }
 

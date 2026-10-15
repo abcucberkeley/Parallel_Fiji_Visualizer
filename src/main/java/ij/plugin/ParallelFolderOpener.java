@@ -11,6 +11,8 @@ import edu.abc.berkeley.PRT;
 import edu.abc.berkeley.PRZ;
 import edu.abc.berkeley.ProgressEstimator;
 import edu.abc.berkeley.SeriesLayout;
+import edu.abc.berkeley.TiffImage;
+import edu.abc.berkeley.ZarrImage;
 import edu.abc.berkeley.ZarrMetadata;
 import ij.*;
 import ij.io.*;
@@ -218,13 +220,35 @@ public class ParallelFolderOpener implements PlugIn {
 				//ImagePlus imp = opener.openImage(directory, list[i]);
 				ImagePlus imp = null;
 				String cFile = directory+File.separator+list[i]; 
+				// Matt: TIFFs and Zarrs are not opened here, as their descriptions
+				// give what is needed (the pixels are read once, in the loop below):
+				// the size, the bit depth PRT/PRZ would open them with, and for
+				// TIFFs ImageJ's Info (a DICOM series saved as TIFF keeps its tags)
 				if(PRT.isTiff(cFile)) {
-					PRT prt = new PRT(cFile,false);
-					imp = prt.getImp();
+					TiffImage tiff = TiffImage.open(cFile);
+					FileInfo[] tiffInfo = PRT.isBigTiff(cFile) ? null : Opener.getTiffFileInfo(cFile);
+					IJ.redirectErrorMessages(false);
+					width = tiff.width;
+					height = tiff.height;
+					if (this.bitDepth==0) {
+						this.bitDepth = tiff.displayBits();
+						this.defaultBitDepth = bitDepth;
+					}
+					String info = tiffInfo!=null && tiffInfo.length>0 ? tiffInfo[0].info : null;
+					if (info!=null && info.contains("7FE0,0010"))
+						dicomImages = true;
+					break;
 				}
 				else if(ZarrMetadata.isZarr(new File(cFile))) {
-					PRZ prz = new PRZ(cFile,false);
-					imp = prz.getImp();
+					ZarrImage zarr = ZarrImage.open(new File(cFile));
+					IJ.redirectErrorMessages(false);
+					width = (int)zarr.width();
+					height = (int)zarr.height();
+					if (this.bitDepth==0) {
+						this.bitDepth = zarr.displayBits();
+						this.defaultBitDepth = bitDepth;
+					}
+					break;
 				}
 				else imp = opener.openImage(directory, list[i]);
 				IJ.redirectErrorMessages(false);

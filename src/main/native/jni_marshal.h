@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <omp.h>
+
 // Shared helpers for moving image data between JNI arrays and native buffers.
 // Header-only on purpose: it must not include anything from cpp-tiff or
 // cpp-zarr -- both install a helperfunctions.h with the same include guard, so
@@ -119,16 +121,21 @@ inline float bfloat16ToFloat(uint16_t b) {
 	return f;
 }
 
-// Convert float16 or bfloat16 samples to float (ImageJ has no 16-bit float type).
-inline float* float16ToFloat(const uint16_t* src, uint64_t n, bool bfloat16) {
-	float* dst = (float*)malloc(n * sizeof(float));
-	if (dst == nullptr) return nullptr;
-	#pragma omp parallel for
-	for (int64_t i = 0; i < (int64_t)n; i++) {
-		dst[i] = bfloat16 ? bfloat16ToFloat(src[i]) : halfToFloat(src[i]);
+// Caps the threads of the OpenMP regions the calling thread starts while it
+// lives: a read of a small file with every core spends longer starting the
+// threads (each opening the file) than reading. It should cover a whole JNI
+// call, so that call's regions keep one team size: libgomp ends threads when
+// a region uses fewer than the last and starts new ones when it uses more.
+class ThreadCap {
+	int previous;
+public:
+	explicit ThreadCap(uint64_t threads) : previous(omp_get_max_threads()) {
+		if (threads < (uint64_t)previous) omp_set_num_threads(threads > 0 ? (int)threads : 1);
 	}
-	return dst;
-}
+	~ThreadCap() { omp_set_num_threads(previous); }
+	ThreadCap(const ThreadCap&) = delete;
+	ThreadCap& operator=(const ThreadCap&) = delete;
+};
 
 // Copy n equally sized planes with all cores in ONE parallel region. Forking
 // a region costs a thread wake-up (milliseconds once the OpenMP threads have
@@ -164,19 +171,18 @@ inline uint64_t planesPerBatch(uint64_t sliceBytes) {
 	return n;
 }
 
-// Build a T[nSlices][sliceElems] Java array from a contiguous native buffer.
+// Build a T[nSlices][sliceElems] Java array, filled by fill(dst, first,
+// count), which must write planes [first, first + count) to dst[0..count).
 // Slices are allocated a batch at a time, pinned with GetPrimitiveArrayCritical
-// (nesting is allowed), filled by one parallel copy and released; nothing but
-// the critical get/release runs while a batch is pinned. Set*ArrayRegion was
-// single-threaded and could not take more than INT_MAX/2 elements per call.
-// With dest (a T[nSlices][sliceElems] allocated by the caller, e.g. from all
-// cores at once) the planes are filled in place; a dest that does not match
-// the image is rejected with an exception rather than written past. With
-// offsets, slice i is copied from data + offsets[i] instead of following the
-// one before it, so planes stored in another order need no reordering copy.
-template <typename T>
-jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint64_t nSlices,
-                          jobjectArray dest = nullptr, const uint64_t* offsets = nullptr) {
+// (nesting is allowed), filled by one call (one parallel region) and released;
+// nothing but the critical get/release and fill runs while a batch is pinned.
+// Set*ArrayRegion was single-threaded and could not take more than INT_MAX/2
+// elements per call. With dest (a T[nSlices][sliceElems] allocated by the
+// caller, e.g. from all cores at once) the planes are filled in place; a dest
+// that does not match the image is rejected with an exception rather than
+// written past.
+template <typename T, typename Fill>
+jobjectArray slicesToJavaWith(JNIEnv* env, uint64_t sliceElems, uint64_t nSlices, jobjectArray dest, Fill fill) {
 	using Traits = JniArrayTraits<T>;
 	jobjectArray outer = dest;
 	if (dest == nullptr) {
@@ -193,11 +199,10 @@ jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint6
 	const uint64_t sliceBytes = sliceElems * sizeof(T);
 	const uint64_t perBatch = planesPerBatch(sliceBytes);
 	std::vector<typename Traits::ArrayType> arrays;
-	std::vector<void*> dst;
-	std::vector<const void*> src;
+	std::vector<T*> dst;
 	for (uint64_t start = 0; start < nSlices; start += perBatch) {
 		const uint64_t end = start + perBatch < nSlices ? start + perBatch : nSlices;
-		arrays.clear(); dst.clear(); src.clear();
+		arrays.clear(); dst.clear();
 		if (env->EnsureLocalCapacity((jint)(end - start) + 4) < 0) return nullptr;
 		for (uint64_t i = start; i < end; i++) {
 			typename Traits::ArrayType slice;
@@ -227,14 +232,148 @@ jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint6
 				for (auto a : arrays) env->DeleteLocalRef(a);
 				return nullptr;
 			}
-			dst.push_back(p);
-			src.push_back(data + (offsets != nullptr ? offsets[start + k] : (start + k) * sliceElems));
+			dst.push_back((T*)p);
 		}
-		copyPlanes(dst.data(), src.data(), (int64_t)dst.size(), sliceBytes);
+		fill(dst.data(), start, (uint64_t)dst.size());
 		for (size_t k = 0; k < dst.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], dst[k], 0);
 		for (auto a : arrays) env->DeleteLocalRef(a);
 	}
 	return outer;
+}
+
+// Fill the existing Java planes dest[idx[k]], k in [0, n), each of sliceElems
+// elements, by fill(dst, k0, count), which must write planes idx[k0..k0+count)
+// to dst[0..count). Pinned a batch at a time like slicesToJavaWith. Returns
+// false, with a Java exception pending, if a plane is missing or the wrong size.
+template <typename T, typename Fill>
+bool fillJavaPlanes(JNIEnv* env, jobjectArray dest, uint64_t sliceElems, const uint64_t* idx, uint64_t n, Fill fill) {
+	using Traits = JniArrayTraits<T>;
+	const uint64_t perBatch = planesPerBatch(sliceElems * sizeof(T));
+	std::vector<typename Traits::ArrayType> arrays;
+	std::vector<T*> dst;
+	for (uint64_t k0 = 0; k0 < n; k0 += perBatch) {
+		const uint64_t k1 = k0 + perBatch < n ? k0 + perBatch : n;
+		arrays.clear(); dst.clear();
+		if (env->EnsureLocalCapacity((jint)(k1 - k0) + 4) < 0) return false;
+		for (uint64_t k = k0; k < k1; k++) {
+			typename Traits::ArrayType slice = (typename Traits::ArrayType)env->GetObjectArrayElement(dest, (jsize)idx[k]);
+			if (slice == nullptr || (uint64_t)env->GetArrayLength(slice) != sliceElems) {
+				if (slice != nullptr) env->DeleteLocalRef(slice);
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				throwRuntime(env, "Destination plane has the wrong size for the image");
+				return false;
+			}
+			arrays.push_back(slice);
+		}
+		for (size_t j = 0; j < arrays.size(); j++) {
+			void* p = env->GetPrimitiveArrayCritical(arrays[j], nullptr);
+			if (p == nullptr) {
+				for (size_t i = 0; i < dst.size(); i++) env->ReleasePrimitiveArrayCritical(arrays[i], dst[i], 0);
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				return false;
+			}
+			dst.push_back((T*)p);
+		}
+		fill(dst.data(), k0, (uint64_t)dst.size());
+		for (size_t j = 0; j < dst.size(); j++) env->ReleasePrimitiveArrayCritical(arrays[j], dst[j], 0);
+		for (auto a : arrays) env->DeleteLocalRef(a);
+	}
+	return true;
+}
+
+// Build a T[nSlices][sliceElems] Java array from a native buffer holding the
+// slices one after another, or with offsets, slice i at data + offsets[i]
+// (so planes stored in another order need no reordering copy).
+template <typename T>
+jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint64_t nSlices,
+                          jobjectArray dest = nullptr, const uint64_t* offsets = nullptr) {
+	const uint64_t sliceBytes = sliceElems * sizeof(T);
+	std::vector<const void*> src;
+	return slicesToJavaWith<T>(env, sliceElems, nSlices, dest, [&](T* const* dst, uint64_t first, uint64_t count) {
+		src.clear();
+		for (uint64_t k = 0; k < count; k++)
+			src.push_back(data + (offsets != nullptr ? offsets[first + k] : (first + k) * sliceElems));
+		copyPlanes((void* const*)dst, src.data(), (int64_t)count, sliceBytes);
+	});
+}
+
+// Where planes lie in a native buffer: pixel (x, y) of plane p is element
+// base[p] + x*sx + y*sy (x across a row of w pixels, y down h rows)
+struct PlaneLayout {
+	uint64_t w, h, sx, sy;
+	const uint64_t* base;
+	bool contiguous() const { return (w == 1 || sx == 1) && (h == 1 || sy == w); }
+};
+
+// Conversions of each element on its way into Java's arrays
+template <typename S, typename D>
+struct Cast {
+	D operator()(S v) const { return (D)v; }
+};
+
+// Signed integers, XOR-shifted into the unsigned range ImageJ expects: +128
+// for int8 (mask 0x80) and +32768 for int16 (mask 0x8000) are bitwise
+// identical to flipping the sign bit. A Java-side calibration maps back.
+template <typename S, typename D>
+struct XorSign {
+	S mask;
+	D operator()(S v) const { return (D)(S)(v ^ mask); }
+};
+
+struct HalfToFloat {
+	bool bfloat16;
+	float operator()(uint16_t v) const { return bfloat16 ? bfloat16ToFloat(v) : halfToFloat(v); }
+};
+
+// Whether conv leaves elements as they are, so planes can be memcpy'd
+template <typename Conv, typename S, typename D> struct PlainCopy { static const bool value = false; };
+template <typename T> struct PlainCopy<Cast<T, T>, T, T> { static const bool value = true; };
+
+// Fill dst[0..count) with planes [first, first + count) of src laid out as L,
+// converting every element with conv: straight into Java's (pinned) arrays,
+// with no intermediate copy of the image. Contiguous planes go in blocks; the
+// others in 64x64 tiles, which keep the reads of transposed planes (MATLAB's
+// (y, x) layout, sx = h) in cache. Fills of up to 1 MB stay on one thread
+// (see copyPlanes).
+template <typename S, typename D, typename Conv>
+void fillPlanes(D* const* dst, uint64_t first, uint64_t count, const S* src, const PlaneLayout& L, Conv conv) {
+	const uint64_t n = L.w * L.h;
+	const bool parallel = count * n * sizeof(D) > (1u << 20);
+	if (L.contiguous() && PlainCopy<Conv, S, D>::value) {
+		// memcpy outruns an element loop (by up to 5% on some CPUs)
+		std::vector<const void*> from(count);
+		for (uint64_t p = 0; p < count; p++) from[p] = src + L.base[first + p];
+		copyPlanes((void* const*)dst, from.data(), (int64_t)count, n * sizeof(D));
+		return;
+	}
+	if (L.contiguous()) {
+		const uint64_t block = 1u << 16, per = (n + block - 1) / block;
+		const int64_t total = (int64_t)(count * per);
+		#pragma omp parallel for schedule(static) if(parallel)
+		for (int64_t k = 0; k < total; k++) {
+			const uint64_t p = (uint64_t)k / per, i0 = ((uint64_t)k % per) * block, i1 = i0 + block < n ? i0 + block : n;
+			const S* s = src + L.base[first + p];
+			D* d = dst[p];
+			for (uint64_t i = i0; i < i1; i++) d[i] = conv(s[i]);
+		}
+		return;
+	}
+	const uint64_t B = 64, rowTiles = (L.h + B - 1) / B;
+	const int64_t total = (int64_t)(count * rowTiles);
+	#pragma omp parallel for schedule(static) if(parallel)
+	for (int64_t k = 0; k < total; k++) {
+		const uint64_t p = (uint64_t)k / rowTiles, y0 = ((uint64_t)k % rowTiles) * B, y1 = y0 + B < L.h ? y0 + B : L.h;
+		const S* s = src + L.base[first + p];
+		D* d = dst[p];
+		for (uint64_t x0 = 0; x0 < L.w; x0 += B) {
+			const uint64_t x1 = x0 + B < L.w ? x0 + B : L.w;
+			for (uint64_t y = y0; y < y1; y++) {
+				D* row = d + y * L.w;
+				const S* sr = s + y * L.sy;
+				for (uint64_t x = x0; x < x1; x++) row[x] = conv(sr[x * L.sx]);
+			}
+		}
+	}
 }
 
 // Copy a Java T[nSlices][sliceElems] into one contiguous native buffer
@@ -278,47 +417,6 @@ inline void* slicesToNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElem
 		for (auto a : arrays) env->DeleteLocalRef(a);
 	}
 	return buf;
-}
-
-// Convert a numeric buffer to float (ImageStack displays 32-bit data as float).
-template <typename S>
-inline float* convertToFloat(const S* src, uint64_t n) {
-	float* dst = (float*)malloc(n * sizeof(float));
-	if (dst == nullptr) return nullptr;
-	#pragma omp parallel for
-	for (int64_t i = 0; i < (int64_t)n; i++) {
-		dst[i] = (float)src[i];
-	}
-	return dst;
-}
-
-// Convert a double buffer to float (ImageStack has no double support).
-inline float* doubleToFloat(const double* src, uint64_t n) {
-	return convertToFloat<double>(src, n);
-}
-
-// XOR-shift signed samples into the unsigned range ImageJ expects: +128 for
-// int8 (mask 0x80) and +32768 for int16 (mask 0x8000) are bitwise-identical
-// to flipping the sign bit. A calibration on the Java side maps values back.
-template <typename T>
-inline void xorShiftInPlace(T* data, uint64_t n, T mask) {
-	#pragma omp parallel for
-	for (int64_t i = 0; i < (int64_t)n; i++) {
-		data[i] ^= mask;
-	}
-}
-
-// Pack chunky (interleaved) 8-bit RGB or RGBA samples into ImageJ's int-based
-// RGB pixels (0xff000000 | r<<16 | g<<8 | b); alpha, if present, is dropped.
-inline int32_t* packRgbToArgb(const uint8_t* src, uint64_t nPixels, uint64_t samplesPerPixel) {
-	int32_t* dst = (int32_t*)malloc(nPixels * sizeof(int32_t));
-	if (dst == nullptr) return nullptr;
-	#pragma omp parallel for
-	for (int64_t i = 0; i < (int64_t)nPixels; i++) {
-		const uint8_t* p = src + i * samplesPerPixel;
-		dst[i] = (int32_t)(0xFF000000u | ((uint32_t)p[0] << 16) | ((uint32_t)p[1] << 8) | (uint32_t)p[2]);
-	}
-	return dst;
 }
 
 } // namespace pfv

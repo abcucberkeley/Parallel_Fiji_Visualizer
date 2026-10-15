@@ -4,7 +4,7 @@
 //
 // cpp-zarr reports problems by throwing std::string. Nothing may escape a JNI
 // function: an uncaught C++ exception aborts the JVM, taking Fiji with it. So
-// every call into cpp-zarr goes through readPlanes() or withZarr() below.
+// every call into cpp-zarr goes through readToJava() or withZarr() below.
 //
 // A read takes a window [start, end) with one value per axis of the array,
 // and which axes are the image's x, y, z, channel and time ({x, y, z, c, t};
@@ -15,11 +15,13 @@
 #include <jni.h>
 #include <cstdint>
 #include <cstdlib>
+#include <algorithm>
 #include <cstring>
 #include <exception>
 #include <string>
 #include <vector>
 
+#include "helperfunctions.h" // cpp-zarr's
 #include "parallelreadzarr.h"
 #include "zarr.h"
 
@@ -28,45 +30,6 @@
 
 namespace {
 
-// A read's planes: data holds planes() * planeElems elements, plane i
-// starting at element offsets[i]
-struct Planes {
-	void* data = nullptr; // malloc'd; the caller frees it
-	uint64_t planeElems = 0;
-	std::vector<uint64_t> offsets;
-	uint64_t elems() const { return planeElems * offsets.size(); }
-};
-
-struct Elem16 { uint64_t lo, hi; }; // complex128
-
-// Copy each plane (x stride sx and y stride sy from its base) into ImageJ
-// order. Tiles of 64x64 keep the reads of a transposed plane (MATLAB's y, x
-// layout: sx = H) in cache instead of touching a new cache line per element.
-template <typename T>
-void gatherPlanes(T* dst, const T* src, uint64_t W, uint64_t H,
-                  const std::vector<uint64_t>& base, uint64_t sx, uint64_t sy)
-{
-	const uint64_t B = 64;
-	const int64_t nPlanes = (int64_t)base.size();
-	const int64_t rowTiles = (int64_t)((H + B - 1) / B);
-	#pragma omp parallel for collapse(2) schedule(static)
-	for (int64_t p = 0; p < nPlanes; p++) {
-		for (int64_t r = 0; r < rowTiles; r++) {
-			const T* s = src + base[(size_t)p];
-			T* d = dst + (uint64_t)p * W * H;
-			const uint64_t y0 = (uint64_t)r * B, y1 = y0 + B < H ? y0 + B : H;
-			for (uint64_t x0 = 0; x0 < W; x0 += B) {
-				const uint64_t x1 = x0 + B < W ? x0 + B : W;
-				for (uint64_t y = y0; y < y1; y++) {
-					T* row = d + y * W;
-					const T* sr = s + y * sy;
-					for (uint64_t x = x0; x < x1; x++) row[x] = sr[x * sx];
-				}
-			}
-		}
-	}
-}
-
 std::vector<uint64_t> toVector(JNIEnv* env, jlongArray a) {
 	const jsize n = a == nullptr ? 0 : env->GetArrayLength(a);
 	std::vector<jlong> tmp((size_t)n);
@@ -74,9 +37,29 @@ std::vector<uint64_t> toVector(JNIEnv* env, jlongArray a) {
 	return std::vector<uint64_t>(tmp.begin(), tmp.end());
 }
 
-// The body of readPlanes; returns why the read failed, or "" on success.
-std::string readPlanesFrom(zarr& Zarr, const std::vector<uint64_t>& start, const std::vector<uint64_t>& end,
-                           const jint* axes, uint64_t elemBytes, Planes& out)
+enum { X, Y, Z, C, T };
+
+// A read's window [start, end), which of the array's axes are x, y, z, c and t
+// (and the image's size along them), the memory order cpp-zarr writes the
+// window in, and the slabs it is read in: [cuts[i], cuts[i + 1]) along image
+// axis slabAxis (window-relative), or all of it in one read when slabAxis < 0.
+struct Window {
+	std::vector<uint64_t> start, end;
+	jint axes[5];
+	uint64_t size[5];
+	bool cOrder = false;
+	int slabAxis = -1;
+	std::vector<uint64_t> cuts;
+	uint64_t planes() const { return size[Z] * size[C] * size[T]; }
+};
+
+// Slabs hold at least this much: per-read costs stay small next to the read.
+// (Tests set it lower to read small arrays in slabs.)
+uint64_t minSlabBytes = (uint64_t)1 << 30;
+
+// Checks a read and plans it; returns why it cannot be done, or "".
+std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vector<uint64_t>& end,
+                 const jint* axes, uint64_t elemBytes, Window& w)
 {
 	const int64_t n = (int64_t)Zarr.get_ndims();
 	if ((int64_t)start.size() != n || (int64_t)end.size() != n)
@@ -99,81 +82,145 @@ std::string readPlanesFrom(zarr& Zarr, const std::vector<uint64_t>& start, const
 		for (int i = 0; i < 5; i++) role = role || axes[i] == d;
 		if (!role && extent[d] != 1) return "The read window spans an axis that is not x, y, z, c or t";
 	}
+	w.start = start;
+	w.end = end;
+	for (int i = 0; i < 5; i++) {
+		w.axes[i] = axes[i];
+		w.size[i] = axes[i] >= 0 ? extent[axes[i]] : 1;
+	}
 
 	// Read in the memory order that keeps each plane one compact block: F when
 	// x and y come before the other axes read (MATLAB's y, x, z, c, t), C when
 	// they come after them (NumPy's t, c, z, y, x); otherwise the array's own
 	// order, which cpp-zarr copies chunks into fastest
-	const int64_t lo = axes[0] < axes[1] ? axes[0] : axes[1];
-	const int64_t hi = axes[0] < axes[1] ? axes[1] : axes[0];
+	const int64_t lo = axes[X] < axes[Y] ? axes[X] : axes[Y];
+	const int64_t hi = axes[X] < axes[Y] ? axes[Y] : axes[X];
 	bool first = true, last = true;
 	for (int64_t d = 0; d < n; d++) {
-		if (d == axes[0] || d == axes[1] || extent[d] == 1) continue;
+		if (d == axes[X] || d == axes[Y] || extent[d] == 1) continue;
 		if (d < hi) first = false;
 		if (d > lo) last = false;
 	}
-	const bool cOrder = last && !first ? true : first && !last ? false : Zarr.get_order() == "C";
+	w.cOrder = last && !first ? true : first && !last ? false : Zarr.get_order() == "C";
 
-	void* raw = parallelReadZarrWriteWrapper(Zarr, true, start, end, cOrder);
-	if (raw == nullptr) return "Parallel Zarr read failed";
-
-	std::vector<uint64_t> stride((size_t)n, 1);
-	if (cOrder) for (int64_t d = n - 2; d >= 0; d--) stride[d] = stride[d + 1] * extent[d + 1];
-	else for (int64_t d = 1; d < n; d++) stride[d] = stride[d - 1] * extent[d - 1];
-	uint64_t size[5], step[5];
-	for (int i = 0; i < 5; i++) {
-		size[i] = axes[i] >= 0 ? extent[axes[i]] : 1;
-		step[i] = axes[i] >= 0 ? stride[axes[i]] : 0;
+	// Big windows are read in slabs through one buffer. A fresh buffer of the
+	// whole window spends up to half the read having its pages zeroed by the
+	// kernel; a reused one is zeroed once, and only a slab is held. Slabs run
+	// along the slowest of z, c and t in the read's memory order, start and end
+	// on chunk boundaries (no chunk is decoded twice) and hold at least
+	// minSlabBytes, so windows under twice that are read at once.
+	const uint64_t bytes = w.size[X] * w.size[Y] * w.planes() * elemBytes;
+	if (bytes < 2 * minSlabBytes) return "";
+	int axis = -1;
+	for (int i = Z; i <= T; i++) {
+		if (axes[i] < 0 || w.size[i] < 2) continue;
+		if (axis < 0 || (w.cOrder ? axes[i] < axes[axis] : axes[i] > axes[axis])) axis = i;
 	}
-	const uint64_t W = size[0], H = size[1], Z = size[2], C = size[3], T = size[4];
-	out.planeElems = W * H;
-	out.offsets.resize(Z * C * T);
-	for (uint64_t t = 0; t < T; t++)
-		for (uint64_t z = 0; z < Z; z++)
-			for (uint64_t c = 0; c < C; c++)
-				out.offsets[c + C * (z + Z * t)] = z * step[2] + c * step[3] + t * step[4];
-
-	if ((W == 1 || step[0] == 1) && (H == 1 || step[1] == W)) {
-		out.data = raw; // every plane is already in ImageJ order
-		return "";
+	if (axis < 0) return "";
+	const uint64_t a = (uint64_t)axes[axis], chunk = Zarr.get_chunks(a);
+	const uint64_t perUnit = bytes / w.size[axis];
+	const uint64_t rows = (minSlabBytes + perUnit * chunk - 1) / (perUnit * chunk);
+	const uint64_t step = chunk * (rows > 0 ? rows : 1);
+	w.cuts.push_back(0);
+	for (uint64_t p = start[a]; p < end[a];) {
+		const uint64_t next = (p / step + 1) * step < end[a] ? (p / step + 1) * step : end[a];
+		w.cuts.push_back(next - start[a]);
+		p = next;
 	}
-	out.data = malloc(out.elems() * elemBytes);
-	if (out.data == nullptr) {
-		free(raw);
-		return "Out of native memory reordering the Zarr read";
-	}
-	switch (elemBytes) {
-		case 1: gatherPlanes((uint8_t*)out.data, (const uint8_t*)raw, W, H, out.offsets, step[0], step[1]); break;
-		case 2: gatherPlanes((uint16_t*)out.data, (const uint16_t*)raw, W, H, out.offsets, step[0], step[1]); break;
-		case 4: gatherPlanes((uint32_t*)out.data, (const uint32_t*)raw, W, H, out.offsets, step[0], step[1]); break;
-		case 8: gatherPlanes((uint64_t*)out.data, (const uint64_t*)raw, W, H, out.offsets, step[0], step[1]); break;
-		default: gatherPlanes((Elem16*)out.data, (const Elem16*)raw, W, H, out.offsets, step[0], step[1]); break;
-	}
-	free(raw);
-	for (size_t p = 0; p < out.offsets.size(); p++) out.offsets[p] = p * out.planeElems;
+	if (w.cuts.size() > 2) w.slabAxis = axis;
+	else w.cuts.clear();
 	return "";
 }
 
-// Read a window as ImageJ planes in the array's own element type, which must
-// be elemBytes wide. On failure a Java exception is pending and false is
-// returned.
-bool readPlanes(JNIEnv* env, jstring fileName, jlongArray jStart, jlongArray jEnd, jintArray jAxes,
-                uint64_t elemBytes, Planes& out)
+// Reads slab [s0, s1) of the window (all of it when the window is not cut)
+// into buf, missing chunks as the fill value, and fills its planes into
+// Java's, each element converted by conv. Returns why the read failed, or ""
+// (also when a Java exception is pending).
+template <typename S, typename D, typename Conv>
+std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, uint64_t s0, uint64_t s1, void* buf,
+                     const uint8_t* fillElem, jobjectArray dest, Conv conv)
+{
+	const size_t n = w.start.size();
+	std::vector<uint64_t> start = w.start, end = w.end, shape(n);
+	uint64_t lo[5] = { 0, 0, 0, 0, 0 }, hi[5];
+	for (int i = 0; i < 5; i++) hi[i] = w.size[i];
+	if (w.slabAxis >= 0) {
+		const jint a = w.axes[w.slabAxis];
+		start[a] = w.start[a] + s0;
+		end[a] = w.start[a] + s1;
+		lo[w.slabAxis] = s0;
+		hi[w.slabAxis] = s1;
+	}
+	for (size_t d = 0; d < n; d++) shape[d] = end[d] - start[d];
+	Zarr.set_chunkInfo(start, end);
+	if (parallelReadZarr(Zarr, buf, start, end, shape, sizeof(S) * 8, true, false, w.cOrder, fillElem)) {
+		std::string why = Zarr.get_errString();
+		while (!why.empty() && why.back() == '\n') why.pop_back();
+		return why.empty() ? "Parallel Zarr read failed" : "Reading the Zarr failed: " + why;
+	}
+
+	std::vector<uint64_t> stride(n, 1);
+	if (w.cOrder) for (int64_t d = (int64_t)n - 2; d >= 0; d--) stride[d] = stride[d + 1] * shape[d + 1];
+	else for (size_t d = 1; d < n; d++) stride[d] = stride[d - 1] * shape[d - 1];
+	uint64_t step[5];
+	for (int i = 0; i < 5; i++) step[i] = w.axes[i] >= 0 ? stride[w.axes[i]] : 0;
+	// The slab's planes: Java plane c + C*(z + Z*t), at its place in buf
+	std::vector<uint64_t> idx, base;
+	for (uint64_t t = lo[T]; t < hi[T]; t++)
+		for (uint64_t z = lo[Z]; z < hi[Z]; z++)
+			for (uint64_t c = lo[C]; c < hi[C]; c++) {
+				idx.push_back(c + w.size[C] * (z + w.size[Z] * t));
+				base.push_back((z - lo[Z]) * step[Z] + (c - lo[C]) * step[C] + (t - lo[T]) * step[T]);
+			}
+	const pfv::PlaneLayout layout = { w.size[X], w.size[Y], step[X], step[Y], base.data() };
+	const S* src = (const S*)buf;
+	pfv::fillJavaPlanes<D>(env, dest, w.size[X] * w.size[Y], idx.data(), idx.size(),
+		[&](D* const* dst, uint64_t k0, uint64_t count) { pfv::fillPlanes<S, D>(dst, k0, count, src, layout, conv); });
+	return "";
+}
+
+// Reads a window of an array of S elements into dest, Java planes of D, each
+// element converted by conv. On failure a Java exception is pending and
+// nullptr is returned.
+template <typename S, typename D, typename Conv>
+jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongArray jEnd, jintArray jAxes,
+                        jobjectArray dest, Conv conv)
 {
 	if (jAxes == nullptr || env->GetArrayLength(jAxes) != 5) {
 		pfv::throwRuntime(env, "The axes of a Zarr read must be {x, y, z, c, t}");
-		return false;
+		return nullptr;
+	}
+	if (dest == nullptr) {
+		pfv::throwRuntime(env, "No planes to read the Zarr into");
+		return nullptr;
 	}
 	jint axes[5];
 	env->GetIntArrayRegion(jAxes, 0, 5, axes);
 	const std::vector<uint64_t> start = toVector(env, jStart);
 	const std::vector<uint64_t> end = toVector(env, jEnd);
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return false;
+	if (fName == nullptr) return nullptr;
 	std::string problem;
+	void* buf = nullptr;
 	try {
 		zarr Zarr(fName);
-		problem = readPlanesFrom(Zarr, start, end, axes, elemBytes, out);
+		Window w;
+		problem = plan(Zarr, start, end, axes, sizeof(S), w);
+		if (problem.empty() && (uint64_t)env->GetArrayLength(dest) != w.planes())
+			problem = "Destination planes do not match the image slice count";
+		if (problem.empty()) {
+			uint8_t fillElem[16];
+			fillValueElement(Zarr.get_fill_value(), Zarr.get_dtype(), fillElem);
+			uint64_t thickest = 0;
+			for (size_t i = 0; i + 1 < w.cuts.size(); i++) thickest = std::max(thickest, w.cuts[i + 1] - w.cuts[i]);
+			const uint64_t slabPlanes = w.slabAxis >= 0 ? w.planes() / w.size[w.slabAxis] * thickest : w.planes();
+			buf = malloc(w.size[X] * w.size[Y] * slabPlanes * sizeof(S));
+			if (buf == nullptr) problem = "Out of native memory reading the Zarr";
+			const size_t slabs = w.slabAxis >= 0 ? w.cuts.size() - 1 : 1;
+			for (size_t i = 0; i < slabs && problem.empty() && !env->ExceptionCheck(); i++)
+				problem = readSlab<S, D>(env, Zarr, w, w.slabAxis >= 0 ? w.cuts[i] : 0, w.slabAxis >= 0 ? w.cuts[i + 1] : 0,
+					buf, fillElem, dest, conv);
+		}
 	}
 	catch (const std::string& why) {
 		problem = pfv::zarrError(why);
@@ -184,14 +231,14 @@ bool readPlanes(JNIEnv* env, jstring fileName, jlongArray jStart, jlongArray jEn
 	catch (...) {
 		problem = "Parallel Zarr read failed";
 	}
+	free(buf);
 	env->ReleaseStringUTFChars(fileName, fName);
+	if (env->ExceptionCheck()) return nullptr;
 	if (!problem.empty()) {
-		free(out.data);
-		out.data = nullptr;
 		pfv::throwRuntime(env, problem.c_str());
-		return false;
+		return nullptr;
 	}
-	return true;
+	return dest;
 }
 
 // Open a zarr's metadata and hand it to fn, turning every error into a Java
@@ -216,20 +263,11 @@ void withZarr(JNIEnv* env, jstring fileName, Fn fn) {
 	env->ReleaseStringUTFChars(fileName, fName);
 }
 
-template <typename T>
-jobjectArray toJava(JNIEnv* env, const Planes& p, const T* data, jobjectArray dest) {
-	return pfv::slicesToJava<T>(env, data, p.planeElems, p.offsets.size(), dest, p.offsets.data());
-}
-
 template <typename JavaT>
 jobjectArray readZarr(JNIEnv* env, jstring fileName, jlongArray start, jlongArray end,
                       jintArray axes, jobjectArray dest)
 {
-	Planes p;
-	if (!readPlanes(env, fileName, start, end, axes, sizeof(JavaT), p)) return nullptr;
-	jobjectArray out = toJava<JavaT>(env, p, (const JavaT*)p.data, dest);
-	free(p.data);
-	return out;
+	return readToJava<JavaT, JavaT>(env, fileName, start, end, axes, dest, pfv::Cast<JavaT, JavaT>());
 }
 
 // Signed integers: XOR-shift the sign bit into the unsigned range ImageJ
@@ -238,12 +276,7 @@ template <typename UnsignedT, typename JavaT>
 jobjectArray readZarrShifted(JNIEnv* env, jstring fileName, jlongArray start, jlongArray end,
 	jintArray axes, UnsignedT mask, jobjectArray dest)
 {
-	Planes p;
-	if (!readPlanes(env, fileName, start, end, axes, sizeof(UnsignedT), p)) return nullptr;
-	pfv::xorShiftInPlace<UnsignedT>((UnsignedT*)p.data, p.elems(), mask);
-	jobjectArray out = toJava<JavaT>(env, p, (const JavaT*)p.data, dest);
-	free(p.data);
-	return out;
+	return readToJava<UnsignedT, JavaT>(env, fileName, start, end, axes, dest, pfv::XorSign<UnsignedT, JavaT>{ mask });
 }
 
 // 32- and 64-bit integers and doubles are converted to float: ImageJ shows
@@ -252,17 +285,7 @@ template <typename NativeT>
 jobjectArray readZarrAsFloat(JNIEnv* env, jstring fileName, jlongArray start, jlongArray end,
 	jintArray axes, jobjectArray dest)
 {
-	Planes p;
-	if (!readPlanes(env, fileName, start, end, axes, sizeof(NativeT), p)) return nullptr;
-	float* data = pfv::convertToFloat<NativeT>((const NativeT*)p.data, p.elems());
-	free(p.data);
-	if (data == nullptr) {
-		pfv::throwRuntime(env, "Out of native memory converting zarr to float");
-		return nullptr;
-	}
-	jobjectArray out = toJava<float>(env, p, data, dest);
-	free(data);
-	return out;
+	return readToJava<NativeT, float>(env, fileName, start, end, axes, dest, pfv::Cast<NativeT, float>());
 }
 
 } // namespace
@@ -327,17 +350,7 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 	(JNIEnv* env, jobject, jstring fileName, jlongArray start, jlongArray end,
 	 jintArray axes, jboolean bfloat16, jobjectArray dest)
 {
-	Planes p;
-	if (!readPlanes(env, fileName, start, end, axes, 2, p)) return nullptr;
-	float* data = pfv::float16ToFloat((const uint16_t*)p.data, p.elems(), bfloat16 != JNI_FALSE);
-	free(p.data);
-	if (data == nullptr) {
-		pfv::throwRuntime(env, "Out of native memory converting zarr to float");
-		return nullptr;
-	}
-	jobjectArray out = toJava<float>(env, p, data, dest);
-	free(data);
-	return out;
+	return readToJava<uint16_t, float>(env, fileName, start, end, axes, dest, pfv::HalfToFloat{ bfloat16 != JNI_FALSE });
 }
 
 // The numpy-style dtype string, e.g. "<u2", "|u1" or "<f2". cpp-zarr gives
@@ -375,6 +388,13 @@ JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_getZarrDim
 		if (rval != nullptr) env->SetLongArrayRegion(rval, 0, (jsize)n, dims.data());
 	});
 	return rval;
+}
+
+// For tests: the least a slab of a big read holds (see plan).
+JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_setZarrSlabBytes
+	(JNIEnv*, jclass, jlong bytes)
+{
+	minSlabBytes = bytes > 0 ? (uint64_t)bytes : 1;
 }
 
 // Runs when Java loads this library; see primeUnwinder in jni_marshal.h.

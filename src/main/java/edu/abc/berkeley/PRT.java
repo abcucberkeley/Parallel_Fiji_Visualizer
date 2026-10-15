@@ -2,8 +2,12 @@ package edu.abc.berkeley;
 
 import java.awt.image.ColorModel;
 import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 import ij.CompositeImage;
 import ij.IJ;
 import ij.ImagePlus;
@@ -42,20 +46,31 @@ public class PRT {
 		// many-slice tiff; show life before the size is known
 		ProgressEstimator.starting("Reading " + f.getName());
 		TiffImage tiff = TiffImage.open(fileName);
-		// ImageJ's description of the file (null for files it cannot read, such
-		// as BigTIFFs); cpp-tiff's sizes are the ones the pixels are read with
-		FileInfo[] info = Opener.getTiffFileInfo(fileName);
-		FileInfo fi = info != null && info.length > 0 ? info[0] : null;
-		FileOpener fo = new FileOpener(null);
-		ColorModel cm = fi != null ? fo.createColorModel(fi) : null;
+		// ImageJ's description of the file (cpp-tiff's sizes are the ones the
+		// pixels are read with). ImageJ walks every directory of a plain stack
+		// (~0.1 s per 1000 slices), so it reads it on its own thread while
+		// cpp-tiff reads the pixels. It cannot read BigTIFFs (cpp-tiff writes
+		// nothing else): 1.54f misreads them into nonsense, for some files
+		// taking half a minute, and later versions refuse them, so they go
+		// without.
+		FutureTask<FileInfo[]> imageJInfo = null;
+		if(!isBigTiff(fileName)) {
+			imageJInfo = new FutureTask<FileInfo[]>(() -> Opener.getTiffFileInfo(fileName));
+			Thread metadata = new Thread(imageJInfo, "PFV TIFF metadata");
+			metadata.setDaemon(true);
+			metadata.start();
+		}
 
 		int planes = (int)tiff.planes();
 		long bytesPerPixel = tiff.isRgb() ? 4 : Math.min(tiff.bits, 32) / 8;
 		boolean isVirtual = (long)tiff.width*tiff.height*planes*bytesPerPixel > new Memory().maxMemory();
+		Object[] pixels = isVirtual ? null : tiff.read(0, planes, "Reading "+f.getName());
+		FileInfo fi = imageJInfo != null ? firstInfo(imageJInfo) : null;
+		FileOpener fo = new FileOpener(null);
+		ColorModel cm = fi != null ? fo.createColorModel(fi) : null;
 		ImageStack stack;
 		ImagePlus imp;
 		if(!isVirtual) {
-			Object[] pixels = tiff.read(0, planes, "Reading "+f.getName());
 			stack = new ImageStack(tiff.width, tiff.height, cm);
 			for(Object p : pixels) stack.addSlice(null, p);
 			imp = new ImagePlus(f.getName(), stack);
@@ -120,6 +135,33 @@ public class PRT {
 	
 	public PRT(String fileName){
 		this(fileName,true);
+	}
+
+	/** Whether a file starts with the BigTIFF header ("II" 43 0 or "MM" 0 43). */
+	public static boolean isBigTiff(String path) {
+		try (RandomAccessFile f = new RandomAccessFile(path, "r")) {
+			byte[] h = new byte[4];
+			f.readFully(h);
+			return (h[0] == 'I' && h[1] == 'I' && h[2] == 43 && h[3] == 0) || (h[0] == 'M' && h[1] == 'M' && h[2] == 0 && h[3] == 43);
+		}
+		catch(IOException e) {
+			return false;
+		}
+	}
+
+	/** The first directory's ImageJ description from a scan, or null. */
+	private static FileInfo firstInfo(FutureTask<FileInfo[]> scan) {
+		try {
+			FileInfo[] info = scan.get();
+			return info != null && info.length > 0 ? info[0] : null;
+		}
+		catch(InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return null;
+		}
+		catch(ExecutionException e) {
+			return null;
+		}
 	}
 	
 	public ImagePlus getImp() {
