@@ -45,106 +45,189 @@ public class ParallelReadNative {
 	}
 
 	// --- TIFF ---
-	// Each reader fills {@code dest}, one plane of rows*columns elements per
-	// slice (see getTiffDims), and returns it. The overloads without dest
-	// allocate the planes themselves.
+	// getTiffInfo describes a file from one open: cpp-tiff's TiffInfo, as a
+	// long[] indexed by the TIFF_ constants. The reads take it back, so reading
+	// some slices of a deep stack does not walk its directories again, and read
+	// the file's slices [zStart, zEnd) into dest: one plane of width*height
+	// elements per slice, or for images with several samples per pixel one per
+	// sample, a slice's samples one after another (except RGB8, which packs
+	// 8-bit color into ImageJ RGB pixels). The overloads without info read the
+	// whole file.
 
-	public native byte[][] parallelReadTiffUINT8(String fileName, byte[][] dest);
+	public static final int TIFF_WIDTH = 0, TIFF_HEIGHT = 1, TIFF_SLICES = 2, TIFF_DIRECTORIES = 3,
+		TIFF_BITS = 4, TIFF_SAMPLES = 5, TIFF_SAMPLE_FORMAT = 6, TIFF_STRIP_SIZE = 7, TIFF_COMPRESSION = 8,
+		TIFF_PLANAR = 9, TIFF_TILED = 10, TIFF_IMAGEJ = 11, TIFF_IMAGEJ_IMAGES = 12;
+
+	/**
+	 * The file's width, height, slices (its directories, or the images of an
+	 * ImageJ stack stored as one block), bits per sample, samples per pixel,
+	 * sample format (1 = unsigned int, 2 = signed int, 3 = float) and layout.
+	 */
+	public native long[] getTiffInfo(String fileName);
+
+	/** Bits per sample of the image on disk. */
+	public long getTiffDataType(String fileName) {
+		return getTiffInfo(fileName)[TIFF_BITS];
+	}
+
+	/** Sample format of the image on disk: 1 = unsigned int, 2 = signed int, 3 = float. */
+	public long getTiffSampleFormat(String fileName) {
+		return getTiffInfo(fileName)[TIFF_SAMPLE_FORMAT];
+	}
+
+	/** Samples per pixel of the image on disk: 1 = grayscale, 3 = RGB, 4 = RGBA. */
+	public long getTiffSamplesPerPixel(String fileName) {
+		return getTiffInfo(fileName)[TIFF_SAMPLES];
+	}
+
+	/** {rows, columns, slices} of the image on disk. */
+	public long[] getTiffDims(String fileName) {
+		long[] i = getTiffInfo(fileName);
+		return new long[] { i[TIFF_HEIGHT], i[TIFF_WIDTH], i[TIFF_SLICES] };
+	}
+
+	public native byte[][] parallelReadTiffUINT8(String fileName, long[] info, long zStart, long zEnd, byte[][] dest);
+
+	public byte[][] parallelReadTiffUINT8(String fileName, byte[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT8(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public byte[][] parallelReadTiffUINT8(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffUINT8(fileName, newBytePlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT8(fileName, i, 0, i[TIFF_SLICES], newBytePlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
-	public native short[][] parallelReadTiffUINT16(String fileName, short[][] dest);
+	public native short[][] parallelReadTiffUINT16(String fileName, long[] info, long zStart, long zEnd, short[][] dest);
+
+	public short[][] parallelReadTiffUINT16(String fileName, short[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT16(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public short[][] parallelReadTiffUINT16(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffUINT16(fileName, newShortPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT16(fileName, i, 0, i[TIFF_SLICES], newShortPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
-	public native float[][] parallelReadTiffFLOAT(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffFLOAT(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffFLOAT(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffFLOAT(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffFLOAT(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffFLOAT(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffFLOAT(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** 64-bit images are converted to float: ImageStack has no double support. */
-	public native float[][] parallelReadTiffDOUBLE(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffDOUBLE(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffDOUBLE(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffDOUBLE(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffDOUBLE(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffDOUBLE(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffDOUBLE(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** Signed 8-bit images, shifted to 0-255; a calibration maps values back. */
-	public native byte[][] parallelReadTiffINT8(String fileName, byte[][] dest);
+	public native byte[][] parallelReadTiffINT8(String fileName, long[] info, long zStart, long zEnd, byte[][] dest);
+
+	public byte[][] parallelReadTiffINT8(String fileName, byte[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT8(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public byte[][] parallelReadTiffINT8(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffINT8(fileName, newBytePlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT8(fileName, i, 0, i[TIFF_SLICES], newBytePlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** Signed 16-bit images, shifted to 0-65535 (ImageJ's signed-16 convention). */
-	public native short[][] parallelReadTiffINT16(String fileName, short[][] dest);
+	public native short[][] parallelReadTiffINT16(String fileName, long[] info, long zStart, long zEnd, short[][] dest);
+
+	public short[][] parallelReadTiffINT16(String fileName, short[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT16(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public short[][] parallelReadTiffINT16(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffINT16(fileName, newShortPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT16(fileName, i, 0, i[TIFF_SLICES], newShortPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** 32-bit integer images are converted to float: ImageStack has no int display. */
-	public native float[][] parallelReadTiffINT32(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffINT32(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffINT32(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT32(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffINT32(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffINT32(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT32(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** 32-bit unsigned integer images are converted to float. */
-	public native float[][] parallelReadTiffUINT32(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffUINT32(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffUINT32(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT32(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffUINT32(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffUINT32(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT32(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** 64-bit integer images are converted to float (precision loss above 2^24). */
-	public native float[][] parallelReadTiffINT64(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffINT64(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffINT64(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT64(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffINT64(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffINT64(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffINT64(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
 	/** 64-bit unsigned integer images are converted to float (precision loss above 2^24). */
-	public native float[][] parallelReadTiffUINT64(String fileName, float[][] dest);
+	public native float[][] parallelReadTiffUINT64(String fileName, long[] info, long zStart, long zEnd, float[][] dest);
+
+	public float[][] parallelReadTiffUINT64(String fileName, float[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT64(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public float[][] parallelReadTiffUINT64(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffUINT64(fileName, newFloatPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffUINT64(fileName, i, 0, i[TIFF_SLICES], newFloatPlanes(i[TIFF_SLICES] * i[TIFF_SAMPLES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
-	/** Chunky 8-bit RGB/RGBA, packed into ImageJ int-based RGB pixels. */
-	public native int[][] parallelReadTiffRGB8(String fileName, int[][] dest);
+	/**
+	 * 8-bit RGB/RGBA (interleaved or planar), packed into ImageJ int-based RGB pixels:
+	 * one plane per slice.
+	 */
+	public native int[][] parallelReadTiffRGB8(String fileName, long[] info, long zStart, long zEnd, int[][] dest);
+
+	public int[][] parallelReadTiffRGB8(String fileName, int[][] dest) {
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffRGB8(fileName, i, 0, i[TIFF_SLICES], dest);
+	}
 
 	public int[][] parallelReadTiffRGB8(String fileName) {
-		long[] d = getTiffDims(fileName);
-		return parallelReadTiffRGB8(fileName, newIntPlanes(d[2], d[0] * d[1]));
+		long[] i = getTiffInfo(fileName);
+		return parallelReadTiffRGB8(fileName, i, 0, i[TIFF_SLICES], newIntPlanes(i[TIFF_SLICES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
-
-	/** Bits per pixel of the image on disk. */
-	public native long getTiffDataType(String fileName);
-
-	/** Sample format of the image on disk: 1 = unsigned int, 2 = signed int, 3 = float. */
-	public native long getTiffSampleFormat(String fileName);
-
-	/** Samples per pixel of the image on disk: 1 = grayscale, 3 = RGB, 4 = RGBA. */
-	public native long getTiffSamplesPerPixel(String fileName);
-
-	/** {rows, columns, slices} of the image on disk. */
-	public native long[] getTiffDims(String fileName);
 
 	// --- Zarr ---
 	// A read takes the window [start, end), one value per axis of the array,

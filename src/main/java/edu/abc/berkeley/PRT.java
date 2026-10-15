@@ -8,20 +8,27 @@ import ij.CompositeImage;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
+import ij.ParallelImagePlus;
+import ij.ParallelVirtualStack;
 import ij.Prefs;
 import ij.WindowManager;
 import ij.gui.GenericDialog;
 import ij.io.FileInfo;
 import ij.io.Opener;
 import ij.measure.Calibration;
+import ij.plugin.Memory;
 import ij.process.ImageProcessor;
 import ij.io.FileOpener;
 
+/**
+ * Opens a TIFF file: the pixels with cpp-tiff ({@link TiffImage}), as a
+ * virtual stack when they do not fit in memory, and the calibration,
+ * hyperstack dimensions, LUTs and labels from ImageJ's own reading of the
+ * file's metadata.
+ */
 public class PRT {
 	private ImagePlus imp;
 	private static boolean showConflictMessage = true;
-	
-	//private static final Object lock = new Object();
 	
 	/** Whether a file name has a TIFF extension: .tif or .tiff, in any case. */
 	public static boolean isTiff(String name) {
@@ -30,151 +37,85 @@ public class PRT {
 	}
 
 	public PRT(String fileName, boolean showImage){
-		//synchronized(lock) {
-		//IJ.showProgress(0);
-		// Metadata (ImageJ's IFD scan and the native getters below) can take
-		// seconds on a many-slice tiff; show life before the size is known
-		ProgressEstimator.starting("Reading " + new File(fileName).getName());
-		FileInfo[] info = Opener.getTiffFileInfo(fileName);
-		
-		// Back up method if no file info is available
-		if(info == null) {
-			PRT_NoFileInfo(fileName, showImage);
-			return;
-		}
-		ParallelReadNative prtc = new ParallelReadNative();
-		long bits = prtc.getTiffDataType(fileName);
-		long[] dims = prtc.getTiffDims(fileName);
-
-		FileOpener fo = new FileOpener(null);
-		ColorModel cm = fo.createColorModel(info[0]);
-		ImageStack stack = new ImageStack((int)dims[1],(int)dims[0],cm);
 		File f = new File(fileName);
-		// If the image is an ImageJ image then set the number of stacks to nImages
-		if(info[0].description!=null) {
-			if(info[0].description.contains("ImageJ")) {
-				if(info[0].nImages>0) {
-					dims[2] = info[0].nImages;
-				}
-			}
+		// Metadata (ImageJ's IFD scan and cpp-tiff's) can take seconds on a
+		// many-slice tiff; show life before the size is known
+		ProgressEstimator.starting("Reading " + f.getName());
+		TiffImage tiff = TiffImage.open(fileName);
+		// ImageJ's description of the file (null for files it cannot read, such
+		// as BigTIFFs); cpp-tiff's sizes are the ones the pixels are read with
+		FileInfo[] info = Opener.getTiffFileInfo(fileName);
+		FileInfo fi = info != null && info.length > 0 ? info[0] : null;
+		FileOpener fo = new FileOpener(null);
+		ColorModel cm = fi != null ? fo.createColorModel(fi) : null;
+
+		int planes = (int)tiff.planes();
+		long bytesPerPixel = tiff.isRgb() ? 4 : Math.min(tiff.bits, 32) / 8;
+		boolean isVirtual = (long)tiff.width*tiff.height*planes*bytesPerPixel > new Memory().maxMemory();
+		ImageStack stack;
+		ImagePlus imp;
+		if(!isVirtual) {
+			Object[] pixels = tiff.read(0, planes, "Reading "+f.getName());
+			stack = new ImageStack(tiff.width, tiff.height, cm);
+			for(Object p : pixels) stack.addSlice(null, p);
+			imp = new ImagePlus(f.getName(), stack);
 		}
-		
-		// For now product of first two dims cannot be greater than INTMAX
-		try {
-			if(dims[0]*dims[1] > (long)Integer.MAX_VALUE) throw new Exception("Product of first two dimensions cannot be greater than 2147483647");
-		}
-		catch(Exception e) {
-			System.out.println(e);
+		else {
+			// Planes are read in blocks as they are shown, each with its own progress
 			ProgressEstimator.clearStarting();
-			return;
-		}
-		long sampleFormat = prtc.getTiffSampleFormat(fileName);
-		long samplesPerPixel = prtc.getTiffSamplesPerPixel(fileName);
-		boolean int8Cal = false;
-		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
-			dims[0]*dims[1]*dims[2]*samplesPerPixel*(bits/8), dims[2], "Reading "+f.getName());
-		try {
-			if(samplesPerPixel > 1) {
-				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
-				if(bits == 8) {
-					int im[][] = prtc.parallelReadTiffRGB8(fileName, ParallelReadNative.newIntPlanes(dims[2], dims[0]*dims[1]));
-					for(int i = 0; i < dims[2]; i++){
-						stack.addSlice(null, im[i]);
-					}
-				}
-				else {
-					IJ.log("Only 8-bit RGB tiffs are supported\n");
-					return;
-				}
-			}
-			else if(bits == 8) {
-				byte im[][];
-				if(sampleFormat == 2) {
-					// Signed bytes are shifted to 0-255; a calibration maps them back
-					im = prtc.parallelReadTiffINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
-					int8Cal = true;
-				}
-				else {
-					im = prtc.parallelReadTiffUINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
-				}
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if (bits == 16) {
-				// Signed 16-bit data is shifted natively; the FileInfo-based
-				// calibration maps the values back
-				short im[][] = sampleFormat == 2 ? prtc.parallelReadTiffINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]))
-					: prtc.parallelReadTiffUINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if (bits == 32) {
-				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else im = prtc.parallelReadTiffFLOAT(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if(bits == 64) {
-				// ImageJ has no double or 64-bit integer type; all become float
-				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else im = prtc.parallelReadTiffDOUBLE(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else {
-				IJ.log("Data type not supported\n");
-				return;
-			}
-			progress.finish();
-		} finally {
-			progress.abort();
+			ParallelVirtualStack pVStack = new ParallelVirtualStack(tiff);
+			if(cm != null) pVStack.setColorModel(cm);
+			stack = pVStack;
+			imp = new ParallelImagePlus(f.getName(), pVStack);
 		}
 
-		new Opener();
-
-		ImagePlus imp = new ImagePlus(f.getName(),stack);
-		if (info[0].info!=null)
-			imp.setProperty("Info", info[0].info);
-		if (info[0].properties!=null)
-			imp.setProperties(info[0].properties);
-		imp.setFileInfo(info[0]);
-
-
-		if (info[0].sliceLabels!=null && info[0].sliceLabels.length<=stack.size()) {
-			for (int i=0; i<info[0].sliceLabels.length; i++)
-				stack.setSliceLabel(info[0].sliceLabels[i], i+1);
+		if(fi != null) {
+			if (fi.info!=null)
+				imp.setProperty("Info", fi.info);
+			if (fi.properties!=null)
+				imp.setProperties(fi.properties);
+			imp.setFileInfo(fi);
+			if (fi.sliceLabels!=null && fi.sliceLabels.length<=stack.size()) {
+				for (int i=0; i<fi.sliceLabels.length; i++)
+					stack.setSliceLabel(fi.sliceLabels[i], i+1);
+			}
+			try {
+				// Calibration and hyperstack dimensions; signed 16-bit data,
+				// shifted natively, is mapped back here
+				setCalibration(imp, fi, fo);
+			}
+			catch(Exception e){
+				System.out.println(e);
+			}
 		}
-
-		//Properties props = fo.decodeDescriptionString(info[0]);
-		try {
-			setCalibration(imp,info[0],fo);
+		else {
+			FileInfo fileInfo = new FileInfo();
+			fileInfo.directory = f.getParent();
+			fileInfo.fileName = f.getName();
+			imp.setFileInfo(fileInfo);
+			if(tiff.isSigned() && tiff.bits == 16) imp.getLocalCalibration().setSigned16BitCalibration();
 		}
-		catch(Exception e){
-			System.out.println(e);
-			return;
-		}
-
-		if(int8Cal) {
+		if(tiff.isSigned() && tiff.bits == 8) {
 			// Map the shifted signed bytes back to their real values
 			imp.getLocalCalibration().setFunction(Calibration.STRAIGHT_LINE, new double[]{-128.0,1.0}, "gray value");
 		}
 
-		imp = makeComposite(imp, info[0]);
-		//IJ.showProgress(1.0);
+		// Several samples per pixel (16-bit or float color, say): one channel
+		// each, which ImageJ shows as a composite like the color they are
+		boolean samplesAsChannels = tiff.channels() > 1 && imp.getNChannels() == 1;
+		if(samplesAsChannels) {
+			imp.setDimensions(tiff.channels(), (int)tiff.slices, 1);
+			imp.setOpenAsHyperStack(true);
+		}
+		// Composites draw every channel at once; virtual stacks stay hyperstacks
+		// that show one channel at a time, like zarrs too large for memory
+		if(!isVirtual) {
+			if(samplesAsChannels && tiff.channels() <= CompositeImage.MAX_CHANNELS) imp = new CompositeImage(imp, IJ.COMPOSITE);
+			else if(fi != null) imp = makeComposite(imp, fi);
+		}
 		
+		this.imp = imp;
 		if(showImage) imp.show();
-		else this.imp = imp;
-		//}
-		
-
 	}
 	
 	public PRT(String fileName){
@@ -183,117 +124,6 @@ public class PRT {
 	
 	public ImagePlus getImp() {
 		return this.imp;
-	}
-	
-	void PRT_NoFileInfo(String fileName, boolean showImage){
-		ParallelReadNative prtc = new ParallelReadNative();
-		long bits = prtc.getTiffDataType(fileName);
-		long[] dims = prtc.getTiffDims(fileName);
-
-		ImageStack stack = new ImageStack((int)dims[1],(int)dims[0]);
-		File f = new File(fileName);
-
-		// For now product of first two dims cannot be greater than INTMAX
-		try {
-			if(dims[0]*dims[1] > (long)Integer.MAX_VALUE) throw new Exception("Product of first two dimensions cannot be greater than 2147483647");
-		}
-		catch(Exception e) {
-			System.out.println(e);
-			ProgressEstimator.clearStarting();
-			return;
-		}
-
-		long sampleFormat = prtc.getTiffSampleFormat(fileName);
-		long samplesPerPixel = prtc.getTiffSamplesPerPixel(fileName);
-		boolean int8Cal = false, int16Cal = false;
-		ProgressEstimator progress = ProgressEstimator.begin("readTiff",
-			dims[0]*dims[1]*dims[2]*samplesPerPixel*(bits/8), dims[2], "Reading "+f.getName());
-		try {
-			if(samplesPerPixel > 1) {
-				// Chunky RGB/RGBA, packed natively into ImageJ's int-based RGB slices
-				if(bits == 8) {
-					int im[][] = prtc.parallelReadTiffRGB8(fileName, ParallelReadNative.newIntPlanes(dims[2], dims[0]*dims[1]));
-					for(int i = 0; i < dims[2]; i++){
-						stack.addSlice(null, im[i]);
-					}
-				}
-				else {
-					IJ.log("Only 8-bit RGB tiffs are supported\n");
-					return;
-				}
-			}
-			else if(bits == 8) {
-				byte im[][];
-				if(sampleFormat == 2) {
-					// Signed bytes are shifted to 0-255; a calibration maps them back
-					im = prtc.parallelReadTiffINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
-					int8Cal = true;
-				}
-				else {
-					im = prtc.parallelReadTiffUINT8(fileName, ParallelReadNative.newBytePlanes(dims[2], dims[0]*dims[1]));
-				}
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if (bits == 16) {
-				short im[][];
-				if(sampleFormat == 2) {
-					// Shifted to 0-65535; the signed-16 calibration maps back
-					im = prtc.parallelReadTiffINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
-					int16Cal = true;
-				}
-				else {
-					im = prtc.parallelReadTiffUINT16(fileName, ParallelReadNative.newShortPlanes(dims[2], dims[0]*dims[1]));
-				}
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if (bits == 32) {
-				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT32(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else im = prtc.parallelReadTiffFLOAT(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else if(bits == 64) {
-				// ImageJ has no double or 64-bit integer type; all become float
-				float im[][];
-				if(sampleFormat == 2) im = prtc.parallelReadTiffINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else if(sampleFormat == 1) im = prtc.parallelReadTiffUINT64(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				else im = prtc.parallelReadTiffDOUBLE(fileName, ParallelReadNative.newFloatPlanes(dims[2], dims[0]*dims[1]));
-				for(int i = 0; i < dims[2]; i++){
-					stack.addSlice(null, im[i]);
-				}
-			}
-			else {
-				IJ.log("Data type not supported\n");
-				return;
-			}
-			progress.finish();
-		} finally {
-			progress.abort();
-		}
-
-		ImagePlus imp = new ImagePlus(f.getName(),stack);
-		FileInfo fileInfo = imp.getOriginalFileInfo();
-		if (fileInfo == null) {
-		    fileInfo = new FileInfo(); // Create a new FileInfo if none exists
-		}
-		fileInfo.directory = f.getParent();
-		fileInfo.fileName = f.getName();
-		imp.setFileInfo(fileInfo);
-		if(int8Cal) {
-			// Map the shifted signed bytes back to their real values
-			imp.getLocalCalibration().setFunction(Calibration.STRAIGHT_LINE, new double[]{-128.0,1.0}, "gray value");
-		}
-		if(int16Cal) imp.getLocalCalibration().setSigned16BitCalibration();
-		if(showImage) imp.show();
-		else this.imp = imp;
-
 	}
 	
 	private ImagePlus makeComposite(ImagePlus imp, FileInfo fi) {

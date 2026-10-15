@@ -9,9 +9,8 @@ The heavy lifting is done by the native
 bundled inside the plugin jar and loaded automatically.
 
 ## Limitations
-1. 8-bit RGB/RGBA tiffs are read in parallel, whether their colors are interleaved or stored as separate planes; 16-bit RGB is not supported. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
+1. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
 2. Complex-valued zarr arrays cannot be opened. Data types ImageJ lacks are converted: float16, bfloat16, 32- and 64-bit integers and doubles open as 32-bit float images, and bool arrays as images of 0 and 1
-3. Images are saved as 3D Zarr v2 arrays: a hyperstack's channels and time points are saved one after another along z
 
 ## Quick Start Guide
 
@@ -65,6 +64,19 @@ axes, so give one per number of axes, separated by commas: `yxz, tzyxc`.
 **Auto** goes back to the rules above. Macros can set it with
 `call("ij.Prefs.set", "pfv.zarrAxisOrder", "tzyxc");`.
 
+### Large images and color
+TIFF and Zarr images bigger than Fiji's memory (**Edit › Options › Memory &
+Threads**) open as virtual stacks, read a block of planes at a time as you
+scroll. 8-bit color TIFFs open as RGB images, and 16-bit or float color as one
+channel per color, as ImageJ shows them.
+
+### Saving as Zarr
+**Save as Zarr** writes a Zarr v2 array in MATLAB's axis order, as PetaKit5D
+does: (y, x, z), or (y, x, z, c, t) for a hyperstack, with the axis names
+recorded so the plugin (and xarray) read the hyperstack back as it was. Chunk
+files go in nested folders (`0/0/0`), which writes much faster to network file
+systems than one folder of them all.
+
 ## Building from Source
 
 Requirements:
@@ -91,9 +103,9 @@ the three native sets into one cross-platform jar.
 
 `src/test/java` holds regression tests for the JNI layer and the Java glue:
 native round trips for every data type, end-to-end reads through the plugin's
-readers, Zarr v2, v3 and OME-Zarr layouts and their axes, folder and hyperstack
-opening, the virtual stack, and checks that the plugin still loads in a stock
-Fiji. `mvn package -Pnative` builds the natives
+readers, Zarr v2, v3 and OME-Zarr layouts and their axes, color and ImageJ
+TIFFs, saving stacks and hyperstacks as Zarr, folder and hyperstack opening,
+the virtual stacks, and checks that the plugin still loads in a stock Fiji. `mvn package -Pnative` builds the natives
 and runs every test; a test that needs the natives fails if they were built but
 cannot be loaded. Without `-Pnative` those tests are skipped and the Java-only
 tests still run.

@@ -17,29 +17,23 @@
 
 namespace {
 
-// ImageJ hands us slices in row-major order; the zarr is written in "F" order,
-// so flip the first two axes of every slice.
-template <typename T>
-void transposeXY(T* dst, const T* src, uint64_t s0, uint64_t s1, uint64_t s2) {
-	#pragma omp parallel for
-	for (uint64_t k = 0; k < s2; k++) {
-		for (uint64_t j = 0; j < s1; j++) {
-			for (uint64_t i = 0; i < s0; i++) {
-				dst[i + (j * s0) + (k * s1 * s0)] = src[j + (i * s1) + (k * s1 * s0)];
-			}
-		}
-	}
+std::vector<uint64_t> toVector(JNIEnv* env, jlongArray a) {
+	const jsize n = a == nullptr ? 0 : env->GetArrayLength(a);
+	std::vector<jlong> tmp((size_t)n);
+	if (n > 0) env->GetLongArrayRegion(a, 0, n, tmp.data());
+	return std::vector<uint64_t>(tmp.begin(), tmp.end());
 }
 
-} // namespace
-
-JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZarr
-	(JNIEnv* env, jobject, jstring fileName, jobjectArray slices,
-	 jlong jStartX, jlong jStartY, jlong jStartZ, jlong jEndX, jlong jEndY, jlong jEndZ,
-	 jlong jChunkX, jlong jChunkY, jlong jChunkZ, jint jCrop, jstring jCname,
-	 jint jUseUuid, jlong jBits)
+// Writes a new Zarr v2 array (F order, nested chunk folders, blosc with
+// cname) of the given shape and chunks from ImageJ planes of planeElems
+// elements. inStrides gives, in elements, how far apart neighbors along each
+// axis of the array are in the planes laid end to end, so ImageJ's layout
+// (x fastest, then y, then the stack) is written as it is, with no transposed
+// copy.
+void writeZarr(JNIEnv* env, jstring fileName, jobjectArray slices, uint64_t planeElems,
+               const std::vector<uint64_t>& shape, const std::vector<uint64_t>& chunks,
+               const std::vector<uint64_t>& inStrides, jstring jCname, uint64_t bits, bool useUuid)
 {
-	const uint64_t bits = (uint64_t)jBits;
 	std::string dtype;
 	switch (bits) {
 		// One-byte types have no byte order: NumPy names them "|u1", and
@@ -51,18 +45,24 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZa
 			pfv::throwRuntime(env, "Unsupported bit depth for Zarr writing (expected 8, 16 or 32)");
 			return;
 	}
+	const size_t n = shape.size();
+	if (n < 2 || chunks.size() != n || inStrides.size() != n) {
+		pfv::throwRuntime(env, "The shape, chunks and strides of a Zarr write must have one value per axis");
+		return;
+	}
+	uint64_t elements = 1;
+	for (uint64_t s : shape) elements *= s;
+	const jsize nPlanes = slices == nullptr ? 0 : env->GetArrayLength(slices);
+	if (planeElems == 0 || elements != planeElems * (uint64_t)nPlanes) {
+		pfv::throwRuntime(env, "The planes do not hold the Zarr array's shape");
+		return;
+	}
 
-	const uint64_t x = (uint64_t)(jEndX - jStartX);
-	const uint64_t y = (uint64_t)(jEndY - jStartY);
-	const uint64_t z = (uint64_t)(jEndZ - jStartZ);
-	const uint64_t bytes = bits / 8;
-
-	void* raw = pfv::slicesToNative(env, slices, x * y, z, bytes);
+	void* raw = pfv::slicesToNative(env, slices, planeElems, (uint64_t)nPlanes, bits / 8);
 	if (raw == nullptr) {
 		pfv::throwRuntime(env, "Out of native memory assembling Zarr write buffer");
 		return;
 	}
-
 	const char* fNameC = env->GetStringUTFChars(fileName, nullptr);
 	const char* cnameC = env->GetStringUTFChars(jCname, nullptr);
 	if (fNameC == nullptr || cnameC == nullptr) {
@@ -76,59 +76,57 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZa
 	env->ReleaseStringUTFChars(fileName, fNameC);
 	env->ReleaseStringUTFChars(jCname, cnameC);
 
-	const std::vector<uint64_t> startCoords = { (uint64_t)jStartX, (uint64_t)jStartY, (uint64_t)jStartZ };
-	const std::vector<uint64_t> endCoords = { (uint64_t)jEndX, (uint64_t)jEndY, (uint64_t)jEndZ };
-	const std::vector<uint64_t> writeShape = { x, y, z };
-
-	void* ordered = nullptr;
+	const std::vector<uint64_t> start(n, 0);
 	try {
-		zarr Zarr(file, { (uint64_t)jChunkX, (uint64_t)jChunkY, (uint64_t)jChunkZ },
-			0, 5, cname, "blosc", 1, ".", dtype, "0", {}, "F", writeShape, 2,
-			{ 0, 0, 0 }, false, { 1, 1, 1 });
-
-		const uint64_t s0 = Zarr.get_shape(0);
-		const uint64_t s1 = Zarr.get_shape(1);
-		const uint64_t s2 = Zarr.get_shape(2);
-		ordered = malloc(s0 * s1 * s2 * Zarr.dtypeBytes());
-		if (ordered == nullptr) {
-			free(raw);
-			pfv::throwRuntime(env, "Out of native memory reordering Zarr write buffer");
-			return;
-		}
-		switch (Zarr.dtypeBytes()) {
-			case 1: transposeXY((uint8_t*)ordered, (const uint8_t*)raw, s0, s1, s2); break;
-			case 2: transposeXY((uint16_t*)ordered, (const uint16_t*)raw, s0, s1, s2); break;
-			case 4: transposeXY((float*)ordered, (const float*)raw, s0, s1, s2); break;
-			case 8: transposeXY((double*)ordered, (const double*)raw, s0, s1, s2); break;
-		}
+		// Nested chunk folders (0/0/0): cpp-zarr's default since 1.7.0, and much
+		// faster to write on network file systems than one folder of them all
+		zarr Zarr(file, chunks, 0, 5, cname, "blosc", 1, "/", dtype, "0", {}, "F", shape, 2,
+			std::vector<uint64_t>(n, 0), false, std::vector<uint64_t>(n, 1));
+		Zarr.write_zarray();
+		Zarr.set_chunkInfo(start, shape);
+		const uint8_t failed = parallelWriteZarr(Zarr, raw, start, shape, shape, inStrides, bits, useUuid, false, true);
 		free(raw);
 		raw = nullptr;
-
-		Zarr.write_zarray();
-		Zarr.set_chunkInfo(startCoords, endCoords);
-		const uint8_t failed = parallelWriteZarr(Zarr, ordered, startCoords, endCoords, writeShape, bits,
-			jUseUuid != 0, jCrop != 0, true);
-		free(ordered);
-		ordered = nullptr;
 		if (failed) pfv::throwRuntime(env, "Writing the Zarr failed (is the disk full or the folder not writable?)");
 	}
 	// cpp-zarr reports problems by throwing std::string. Nothing may escape a
 	// JNI function: an uncaught C++ exception aborts the JVM, taking Fiji with it.
 	catch (const std::string& why) {
 		free(raw);
-		free(ordered);
 		pfv::throwRuntime(env, pfv::zarrError(why).c_str());
 	}
 	catch (const std::exception& e) {
 		free(raw);
-		free(ordered);
 		pfv::throwRuntime(env, e.what());
 	}
 	catch (...) {
 		free(raw);
-		free(ordered);
 		pfv::throwRuntime(env, "Writing the Zarr failed");
 	}
+}
+
+} // namespace
+
+// A 3D array (rows, columns, planes) of shape end - start.
+JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZarr
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray slices,
+	 jlong jStartX, jlong jStartY, jlong jStartZ, jlong jEndX, jlong jEndY, jlong jEndZ,
+	 jlong jChunkX, jlong jChunkY, jlong jChunkZ, jint, jstring jCname,
+	 jint jUseUuid, jlong jBits)
+{
+	const uint64_t h = (uint64_t)(jEndX - jStartX), w = (uint64_t)(jEndY - jStartY), d = (uint64_t)(jEndZ - jStartZ);
+	writeZarr(env, fileName, slices, h * w, { h, w, d }, { (uint64_t)jChunkX, (uint64_t)jChunkY, (uint64_t)jChunkZ },
+		{ w, 1, w * h }, jCname, (uint64_t)jBits, jUseUuid != 0);
+}
+
+// An array of any shape, rows first; see ParallelWriteNative.
+JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZarrArray
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray slices, jlongArray jShape, jlongArray jChunks,
+	 jlongArray jStrides, jstring jCname, jlong jBits)
+{
+	const std::vector<uint64_t> shape = toVector(env, jShape);
+	writeZarr(env, fileName, slices, shape.size() >= 2 ? shape[0] * shape[1] : 0, shape, toVector(env, jChunks),
+		toVector(env, jStrides), jCname, (uint64_t)jBits, true);
 }
 
 // Runs when Java loads this library; see primeUnwinder in jni_marshal.h.

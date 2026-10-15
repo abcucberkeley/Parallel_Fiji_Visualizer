@@ -10,6 +10,7 @@ import java.awt.image.ColorModel;
 import java.util.Arrays;
 import java.util.Properties;
 
+import edu.abc.berkeley.TiffImage;
 import edu.abc.berkeley.ZarrImage;
 
 /** This class represents an array of disk-resident images. */
@@ -34,8 +35,11 @@ public class ParallelVirtualStack extends ImageStack {
 	// 8, 80 s for 32. So planes are fetched in aligned blocks along z (of one
 	// channel and time point) and served from memory while the user scrolls.
 	// The previous block is kept as well, so stepping back across a block
-	// boundary, or between two channels, is free.
+	// boundary, or between two channels, is free. TIFFs are read the same way,
+	// in blocks of consecutive planes: one read of several slices keeps every
+	// core busy, where a slice alone often has too few strips to.
 	private ZarrImage zarr;
+	private TiffImage tiff;
 	private long x0, y0, z0;          // the window's corner in the image
 	private int depth = 1, channels = 1;
 	private int maxBlockPlanes = 16;   // caps the stall of a single fetch
@@ -77,7 +81,7 @@ public class ParallelVirtualStack extends ImageStack {
 	 * reusable. Two blocks may be held plus the JNI copy of an incoming one.
 	 */
 	private int planesPerBlock() {
-		long bytesPerPixel = Math.max(1, bitDepth / 8);
+		long bytesPerPixel = bitDepth == 24 ? 4 : Math.max(1, bitDepth / 8);
 		long planeBytes = (long) getWidth() * getHeight() * bytesPerPixel;
 		long budget = Runtime.getRuntime().maxMemory() / 6;
 		long k = Math.max(1, Math.min(maxBlockPlanes, budget / Math.max(1, planeBytes)));
@@ -86,7 +90,7 @@ public class ParallelVirtualStack extends ImageStack {
 
 	/** The pixels of plane n (1-based, in czt order), reading its block if needed. */
 	private Object pixelsOf(int n) {
-		if (zarr == null) throw new IllegalStateException("This virtual stack has no Zarr image to read");
+		if (zarr == null && tiff == null) throw new IllegalStateException("This virtual stack has no image to read");
 		int i = n - 1;
 		int c = i % channels, z = (i / channels) % depth, t = i / (channels * depth);
 		if (block != null && block.holds(c, t, z))
@@ -105,8 +109,10 @@ public class ParallelVirtualStack extends ImageStack {
 			int start = (z / k) * k;
 			int end = Math.min(start + k, depth);
 			try {
-				Object[] planes = zarr.read(new long[] { x0, y0, z0 + start, c, t },
-					new long[] { x0 + getWidth(), y0 + getHeight(), z0 + end, c + 1, t + 1 }, "Reading " + zarr.title);
+				Object[] planes = zarr != null
+					? zarr.read(new long[] { x0, y0, z0 + start, c, t },
+						new long[] { x0 + getWidth(), y0 + getHeight(), z0 + end, c + 1, t + 1 }, "Reading " + zarr.title)
+					: tiff.read(start, end, "Reading " + tiff.title);
 				block = new Block(c, t, start, planes);
 				return block.planes[z - start];
 			}
@@ -170,6 +176,26 @@ public class ParallelVirtualStack extends ImageStack {
 		this.path = IJ.addSeparator(zarr.path);
 		this.bitDepth = zarr.displayBits();
 		nSlices = channels * depth * (int) zarr.frames();
+		names = new String[Math.max(1, nSlices)];
+		labels = new String[Math.max(1, nSlices)];
+		Arrays.fill(names, "");
+	}
+
+	/**
+	 * Every plane of a TIFF file, in its order (for an ImageJ hyperstack, its
+	 * czt order; for several samples per pixel, a slice's samples together).
+	 */
+	public ParallelVirtualStack(TiffImage tiff) {
+		super(tiff.width, tiff.height, null);
+		this.tiff = tiff;
+		this.width = tiff.width;
+		this.height = tiff.height;
+		// Blocks are runs of planes: one channel and time point of tiff.planes() planes
+		this.depth = (int) tiff.planes();
+		File f = new File(tiff.path);
+		this.path = IJ.addSeparator(f.getAbsoluteFile().getParent());
+		this.bitDepth = tiff.displayBits();
+		nSlices = depth;
 		names = new String[Math.max(1, nSlices)];
 		labels = new String[Math.max(1, nSlices)];
 		Arrays.fill(names, "");
@@ -299,10 +325,12 @@ public class ParallelVirtualStack extends ImageStack {
 		}
 		int w = getWidth(), h = getHeight();
 		if (pixels instanceof byte[])
-			return new ByteProcessor(w, h, (byte[]) pixels);
+			return new ByteProcessor(w, h, (byte[]) pixels, getColorModel());
 		if (pixels instanceof short[])
-			return new ShortProcessor(w, h, (short[]) pixels, null);
-		return new FloatProcessor(w, h, (float[]) pixels);
+			return new ShortProcessor(w, h, (short[]) pixels, getColorModel());
+		if (pixels instanceof int[])
+			return new ColorProcessor(w, h, (int[]) pixels);
+		return new FloatProcessor(w, h, (float[]) pixels, getColorModel());
 	 }
 	 private void label(ImageProcessor ip, String msg, Color color) {
 		int size = getHeight()/20;

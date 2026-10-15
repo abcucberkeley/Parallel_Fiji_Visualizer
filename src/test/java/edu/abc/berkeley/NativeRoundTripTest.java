@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.stream.Stream;
 
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -201,20 +202,25 @@ public class NativeRoundTripTest {
 					(float) (Float.floatToRawIntBits(slices[s][i]) & 0xFFFFFFFFL), back[s][i], 0.0f);
 	}
 
+	/**
+	 * Chunk files go in nested folders (0/0/0), cpp-zarr's default since 1.7.0:
+	 * writes to network file systems are much faster than into one folder.
+	 */
 	@Test
-	public void zarrWriteProducesChunkFiles() {
+	public void zarrWriteProducesNestedChunkFiles() throws Exception {
 		short[][] slices = shortSlices();
 		String path = writeZarr(slices, 16, "chunks.zarr");
-		File dir = new File(path);
-		assertTrue(dir.isDirectory());
-		String[] names = dir.list();
-		assertNotNull(names);
-		int chunkFiles = 0;
-		for (String n : names)
-			if (!n.startsWith(".")) chunkFiles++;
+		String zarray = new String(Files.readAllBytes(Paths.get(path, ".zarray")), StandardCharsets.UTF_8).replace(" ", "");
+		assertTrue(zarray, zarray.contains("\"dimension_separator\":\"/\""));
+		long chunkFiles;
+		try (Stream<Path> files = Files.walk(Paths.get(path))) {
+			chunkFiles = files.filter(Files::isRegularFile).filter(f -> !f.getFileName().toString().startsWith(".")).count();
+		}
 		long expected = ((H + CHUNK - 1) / CHUNK) * ((W + CHUNK - 1) / CHUNK) * ((Z + CHUNK - 1) / CHUNK);
 		assertEquals(expected, chunkFiles);
+		assertTrue(new File(path, "1/1/0").isFile());
 	}
+
 	/** Caller-allocated planes are filled in place and returned as-is. */
 	@Test
 	public void tiffReadsIntoPreallocatedPlanes() {
