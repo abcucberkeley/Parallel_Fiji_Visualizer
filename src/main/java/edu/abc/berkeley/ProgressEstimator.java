@@ -124,7 +124,7 @@ public final class ProgressEstimator {
 		final double mbps = Math.max(1.0, Prefs.get(prefsKey, DEFAULT_MBPS));
 		this.estimatedSeconds = OVERHEAD_SECONDS + totalBytes / (mbps * parallelFrac * 1e6);
 		this.startNanos = System.nanoTime();
-		this.statusText = shorten(status + " (" + formatBytes(totalBytes) + ")" + batchSuffix());
+		this.statusText = composeStatus(status, totalBytes);
 		IJ.showStatus("!" + statusText);
 		IJ.showProgress(batchProgress(0.0));
 		this.timer = new Timer(TICK_MS, e -> tick());
@@ -206,6 +206,14 @@ public final class ProgressEstimator {
 	/** Hide the {@link #starting} indicator when the operation will not run. */
 	static void clearStarting() {
 		releaseBar();
+	}
+
+	/**
+	 * The status line of an operation: what it does, its size, and inside a
+	 * batch the "i/N" count at the very end, where truncation keeps it.
+	 */
+	static String composeStatus(final String status, final long totalBytes) {
+		return shorten(status + " (" + formatBytes(totalBytes) + ")" + batchSuffix());
 	}
 
 	/**

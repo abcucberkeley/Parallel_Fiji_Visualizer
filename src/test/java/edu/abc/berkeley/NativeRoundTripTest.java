@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
@@ -43,12 +42,7 @@ public class NativeRoundTripTest {
 
 	@BeforeClass
 	public static void nativesRequired() {
-		try {
-			new ParallelReadNative();
-		}
-		catch (LinkageError e) {
-			Assume.assumeNoException("Natives are not staged; run mvn test -Pnative", e);
-		}
+		Natives.required();
 	}
 
 	private static short[][] shortSlices() {

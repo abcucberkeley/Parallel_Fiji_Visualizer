@@ -152,6 +152,18 @@
 			<id>native</id>
 			<build>
 				<plugins>
+					<!-- The natives were just built, so tests that need them must
+					     fail if they cannot be loaded. Without this profile those
+					     tests are skipped instead (Java-only development). -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-surefire-plugin</artifactId>
+						<configuration>
+							<systemPropertyVariables>
+								<pfv.requireNatives>true</pfv.requireNatives>
+							</systemPropertyVariables>
+						</configuration>
+					</plugin>
 					<plugin>
 						<groupId>org.codehaus.mojo</groupId>
 						<artifactId>exec-maven-plugin</artifactId>

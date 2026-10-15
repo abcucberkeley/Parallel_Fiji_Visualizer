@@ -1,4 +1,5 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7613251.svg)](https://doi.org/10.5281/zenodo.7613251)
+[![Tests](https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/actions/workflows/tests.yml/badge.svg)](https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/actions/workflows/tests.yml)
 # Parallel_Fiji_Visualizer
 An efficient TIFF/Zarr reader/writer for ImageJ/Fiji that can utilize all the cores of your CPU!
 
@@ -18,14 +19,22 @@ bundled inside the plugin jar and loaded automatically.
 2. OS versions supported: Windows 10 or later, Ubuntu 22.04 (Most modern Linux distributions should also work), and macOS 13 or later (Apple Silicon/M-series only. Intel Macs are not supported as of v1.3.0)
 3. **On Macs, use the Apple silicon Fiji download.** The classic/"stable" Fiji ships an Intel Java and runs through Rosetta even on M-series Macs, so it cannot load the plugin's ARM natives (the plugin will show an error explaining this)
 
-### Download and Install
-1. Download `Parallel_Fiji_Visualizer-<version>.jar` from the latest release: https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases
-2. Copy the jar into the `plugins` folder of your Fiji installation (e.g. `Fiji.app/plugins`)
-3. Launch a new session of Fiji and the plugin appears under the Plugins tab! (You can also search for "Parallel Fiji Visualizer" in the search bar)
+### Install
+Install the plugin through Fiji's updater. Fiji then keeps it up to date along with everything else.
 
-The same jar works on Windows, Linux, and macOS.
+1. In Fiji, open **Help › Update…** and click **Manage Update Sites**.
+2. Click **Add Unlisted Site** and fill in the new row:
+   - **Name:** `Parallel-Fiji-Visualizer`
+   - **URL:** `https://sites.imagej.net/Parallel-Fiji-Visualizer/`
+3. Click **Apply and Close**, then **Apply Changes**, and restart Fiji.
 
-**Upgrading from 1.2.x or older:** delete the old
+The plugin is then in the **Plugins** menu as **Parallel Fiji Visualizer**.
+
+**Copied the plugin jar into Fiji by hand before?** Delete `Parallel_Fiji_Visualizer-<version>.jar` from Fiji's `plugins` folder first. Otherwise Fiji may keep your copy and never update it.
+
+**No internet on the Fiji machine?** Copy `Parallel_Fiji_Visualizer-<version>.jar` from the [latest release](https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases) into Fiji's `plugins` folder instead. It will not update itself.
+
+**Upgrading from 1.2.x or older?** delete the old
 `Parallel_Fiji_Visualizer_lib` folder from `Fiji.app/lib/<os>` and the old
 `Parallel_Fiji_Visualizer_plugin` jar from `Fiji.app/plugins` first; they are
 no longer used.
@@ -54,11 +63,17 @@ the three native sets into one cross-platform jar.
 
 ### Tests
 
-`src/test/java` contains round-trip regression tests for the JNI layer and
-the Java glue (write an image natively, read it back, compare every pixel —
-including the signed/integer dtype conversions and RGB). They run during
-`mvn test -Pnative` / `mvn package -Pnative` and are skipped automatically
-when the natives are not staged.
+`src/test/java` holds regression tests for the JNI layer and the Java glue:
+native round trips for every data type, end-to-end reads through the plugin's
+readers, folder and hyperstack opening, the virtual stack, and checks that the
+plugin still loads in a stock Fiji. `mvn package -Pnative` builds the natives
+and runs every test; a test that needs the natives fails if they were built but
+cannot be loaded. Without `-Pnative` those tests are skipped and the Java-only
+tests still run.
+
+[GitHub Actions](.github/workflows/tests.yml) runs the same build and tests on
+Linux x64, Windows x64 and macOS arm64 for every push that changes more than
+documentation.
 
 ### Developing in an IDE (Eclipse)
 
