@@ -227,6 +227,22 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 	return out;
 }
 
+// The most threads the native reads of the calling thread use from now on
+// (OpenMP keeps it per thread): readers of a folder's files opened at once
+// share the cores. 0 or less: every core again.
+JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_limitThreads
+	(JNIEnv*, jclass, jint threads)
+{
+	omp_set_num_threads(threads > 0 ? (int)threads : omp_get_num_procs());
+}
+
+// The most threads the native reads of the calling thread use (for tests).
+JNIEXPORT jint JNICALL Java_edu_abc_berkeley_ParallelReadNative_threadLimit
+	(JNIEnv*, jclass)
+{
+	return (jint)omp_get_max_threads();
+}
+
 // One open and one walk of the file's directories; see the top of this file.
 JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_getTiffInfo
 	(JNIEnv* env, jobject, jstring fileName)

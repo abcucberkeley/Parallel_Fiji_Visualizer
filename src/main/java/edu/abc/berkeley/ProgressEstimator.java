@@ -69,6 +69,18 @@ public final class ProgressEstimator {
 		IJ.showStatus("");
 	}
 
+	// Files a folder's opener reads ahead on other threads show no progress of
+	// their own: the bar counts the files as the opener takes them (batchItem)
+	private static final ThreadLocal<Boolean> QUIET = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+	/** From now on, operations on the calling thread show no progress. */
+	static void quietInThisThread() {
+		QUIET.set(Boolean.TRUE);
+	}
+
+	/** What operations on a quiet thread get: an estimator that shows nothing. */
+	private static final ProgressEstimator SILENT = new ProgressEstimator();
+
 	private static synchronized boolean inBatch() {
 		return batchTotal > 0;
 	}
@@ -101,6 +113,7 @@ public final class ProgressEstimator {
 	static ProgressEstimator begin(final String opKey, final long totalBytes,
 		final long parallelUnits, final String status)
 	{
+		if (QUIET.get()) return SILENT;
 		return new ProgressEstimator(opKey, totalBytes, parallelUnits, status, null);
 	}
 
@@ -111,7 +124,21 @@ public final class ProgressEstimator {
 	static ProgressEstimator begin(final String opKey, final long totalBytes,
 		final long parallelUnits, final String status, final DoubleSupplier observed)
 	{
+		if (QUIET.get()) return SILENT;
 		return new ProgressEstimator(opKey, totalBytes, parallelUnits, status, observed);
+	}
+
+	/** {@link #SILENT}: already done, so finish and abort do nothing. */
+	private ProgressEstimator() {
+		this.prefsKey = null;
+		this.statusText = null;
+		this.totalBytes = 0;
+		this.parallelFrac = 1.0;
+		this.estimatedSeconds = 0;
+		this.observed = null;
+		this.startNanos = 0;
+		this.timer = null;
+		this.done = true;
 	}
 
 	private ProgressEstimator(final String opKey, final long totalBytes,
@@ -199,12 +226,14 @@ public final class ProgressEstimator {
 	 * before that, call {@link #clearStarting()}.
 	 */
 	static void starting(final String status) {
+		if (QUIET.get()) return;
 		IJ.showStatus("!" + shorten(status + batchSuffix()));
 		IJ.showProgress(inBatch() ? batchProgress(0.01) : 0.01);
 	}
 
 	/** Hide the {@link #starting} indicator when the operation will not run. */
 	static void clearStarting() {
+		if (QUIET.get()) return;
 		releaseBar();
 	}
 

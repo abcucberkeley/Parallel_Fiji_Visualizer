@@ -164,6 +164,31 @@ public final class ZarrMetadata {
 	}
 
 	/**
+	 * The array's size in bytes, from its shape and data type; 0 for a group
+	 * or when the metadata does not say.
+	 */
+	public long bytes() {
+		long[] shape = shape();
+		if (shape == null) return 0;
+		String type = format == 2 ? Json.string(meta.get("dtype")) : Json.string(meta.get("data_type"));
+		long n = elementBytes(type);
+		for (long s : shape) n *= s;
+		return n;
+	}
+
+	/** The bytes of one element of a v2 dtype ("<u2", "|b1", "bfloat16") or v3 data_type ("uint16", "complex64"). */
+	static long elementBytes(String type) {
+		if (type == null) return 0;
+		if (type.endsWith("bfloat16") || type.equals("float16")) return 2;
+		java.util.regex.Matcher v2 = java.util.regex.Pattern.compile("[<>|=]?[biufc](\\d+)").matcher(type);
+		if (v2.matches()) return Long.parseLong(v2.group(1));
+		if (type.equals("bool")) return 1;
+		java.util.regex.Matcher v3 = java.util.regex.Pattern.compile("(u?int|float|complex)(\\d+)").matcher(type);
+		if (v3.matches()) return Long.parseLong(v3.group(2)) / 8;
+		return 0;
+	}
+
+	/**
 	 * The array's axis names: v3's dimension_names, or the
 	 * _ARRAY_DIMENSIONS attribute xarray gives v2 arrays. null when it has
 	 * none; a name may be null.

@@ -44,6 +44,17 @@ public class ParallelReadNative {
 		return p;
 	}
 
+	// --- Threads ---
+
+	/**
+	 * The most threads the native reads of the calling thread use from now on
+	 * (0 or less: every core). Readers of files opened at once share the cores.
+	 */
+	public static native void limitThreads(int threads);
+
+	/** The most threads the native reads of the calling thread use. */
+	public static native int threadLimit();
+
 	// --- TIFF ---
 	// getTiffInfo describes a file from one open: cpp-tiff's TiffInfo, as a
 	// long[] indexed by the TIFF_ constants. The reads take it back, so reading

@@ -7,6 +7,7 @@ import java.awt.event.*;
 import java.awt.image.ColorModel;
 import java.util.*;
 
+import edu.abc.berkeley.FolderPrefetch;
 import edu.abc.berkeley.PRT;
 import edu.abc.berkeley.PRZ;
 import edu.abc.berkeley.ProgressEstimator;
@@ -403,6 +404,9 @@ public class ParallelFolderOpener implements PlugIn {
 			// window subtitle (60 characters at most) shows the tile/time point
 			// of the current slice instead of a shared prefix
 			String[] labels = SeriesLayout.distinguishingNames(files);
+			// Matt: small TIFFs and Zarrs are read several at a time, ahead of
+			// this loop, which still takes them one by one in order
+			FolderPrefetch prefetch = openAsVirtualStack ? null : FolderPrefetch.start(directory, files);
 			ProgressEstimator.beginBatch(files.length);
 			try {
 			// open images as stack
@@ -417,7 +421,10 @@ public class ParallelFolderOpener implements PlugIn {
 				} else if (!openAsVirtualStack||stack==null) {
 					//imp = opener.openImage(directory, list[i]);
 					String cFile = directory+File.separator+files[i]; 
-					if(PRT.isTiff(cFile)) {
+					if(prefetch!=null && prefetch.handles(i)) {
+						imp = prefetch.take(i);
+					}
+					else if(PRT.isTiff(cFile)) {
 						PRT prt = new PRT(cFile,false);
 						imp = prt.getImp();
 					}
@@ -558,6 +565,7 @@ public class ParallelFolderOpener implements PlugIn {
 					{IJ.beep(); break;}
 			}  // open images as stack
 			} finally {
+				if (prefetch!=null) prefetch.close();
 				ProgressEstimator.endBatch();
 			}
 			

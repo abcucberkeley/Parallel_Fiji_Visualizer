@@ -276,6 +276,13 @@ public class PRT {
 		}
 	}
 	void checkForCalibrationConflict(ImagePlus imp, Calibration cal) {
+		// One question at a time when a folder's files are opened at once
+		synchronized(PRT.class) {
+			checkForCalibrationConflictNow(imp, cal);
+		}
+	}
+
+	private void checkForCalibrationConflictNow(ImagePlus imp, Calibration cal) {
 		Calibration gcal = imp.getGlobalCalibration();
 		if  (gcal==null || !showConflictMessage || IJ.isMacro())
 			return;
