@@ -39,6 +39,7 @@ public final class FolderPrefetch implements AutoCloseable {
 	private final ExecutorService pool;
 	private final List<Future<ImagePlus>> pending;
 	private final int window;
+	private final int threadsEach;
 	private int submitted = 0;
 
 	/**
@@ -80,6 +81,15 @@ public final class FolderPrefetch implements AutoCloseable {
 			}
 		}
 		if (readers <= 1) return null;
+		// The opener's thread loads the natives, as its first read would: when
+		// they cannot be loaded it reads the files itself and fails on the
+		// first, with the loader's explanation, as it always has
+		try {
+			NativeLibraries.load();
+		}
+		catch (Throwable e) {
+			return null;
+		}
 		return new FolderPrefetch(directory, files, ours, readers, Math.max(1, cores / readers));
 	}
 
@@ -122,19 +132,16 @@ public final class FolderPrefetch implements AutoCloseable {
 		return s[s.length / 2];
 	}
 
-	private FolderPrefetch(String directory, String[] files, boolean[] ours, int readers, final int threadsEach) {
+	private FolderPrefetch(String directory, String[] files, boolean[] ours, int readers, int threadsEach) {
 		this.directory = directory;
 		this.files = files;
 		this.ours = ours;
 		this.window = 2 * readers;
+		this.threadsEach = threadsEach;
 		this.pending = new ArrayList<Future<ImagePlus>>(java.util.Collections.<Future<ImagePlus>>nCopies(files.length, null));
 		final AtomicInteger n = new AtomicInteger();
 		this.pool = Executors.newFixedThreadPool(readers, r -> {
-			Thread t = new Thread(() -> {
-				ProgressEstimator.quietInThisThread();
-				ParallelReadNative.limitThreads(threadsEach);
-				r.run();
-			}, "PFV folder reader " + n.incrementAndGet());
+			Thread t = new Thread(r, "PFV folder reader " + n.incrementAndGet());
 			t.setDaemon(true);
 			return t;
 		});
@@ -154,7 +161,7 @@ public final class FolderPrefetch implements AutoCloseable {
 	public ImagePlus take(int i) {
 		while (submitted < files.length && submitted <= i + window) {
 			final int j = submitted++;
-			if (ours[j]) pending.set(j, pool.submit(() -> open(j)));
+			if (ours[j]) pending.set(j, pool.submit(() -> read(j)));
 		}
 		Future<ImagePlus> f = pending.set(i, null);
 		if (f == null) return open(i);
@@ -171,6 +178,19 @@ public final class FolderPrefetch implements AutoCloseable {
 			Thread.currentThread().interrupt();
 			throw new RuntimeException("Interrupted while opening " + files[i], e);
 		}
+	}
+
+	/**
+	 * Opens the file in a reader, quietly and with the reader's share of the
+	 * cores. This is set up for each file rather than once per thread, so that
+	 * whatever fails here fails the file, and the opener throws it when it
+	 * takes the file (a reader thread that ended before its first file would
+	 * leave the opener waiting for it).
+	 */
+	private ImagePlus read(int i) {
+		ProgressEstimator.quietInThisThread();
+		ParallelReadNative.limitThreads(threadsEach);
+		return open(i);
 	}
 
 	/** Exactly how the folder opener opens a TIFF or Zarr. */

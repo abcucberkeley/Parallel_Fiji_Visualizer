@@ -34,14 +34,14 @@ The plugin is then in the **Plugins** menu as **Parallel Fiji Visualizer**.
 
 **No internet on the Fiji machine?** Copy `Parallel_Fiji_Visualizer-<version>.jar` from the [latest release](https://github.com/abcucberkeley/Parallel_Fiji_Visualizer/releases) into Fiji's `plugins` folder instead. It will not update itself.
 
-**Upgrading from 1.2.x or older?** delete the old
+**Upgrading from 1.2.x or older?** Delete the old
 `Parallel_Fiji_Visualizer_lib` folder from `Fiji.app/lib/<os>` and the old
 `Parallel_Fiji_Visualizer_plugin` jar from `Fiji.app/plugins` first; they are
 no longer used.
 
 ### Opening Zarr
 Drag a Zarr folder onto the plugin window. A folder is a Zarr if it holds Zarr
-metadata (`.zarray`, `zarr.json` or `.zgroup`); its name does not matter. The
+metadata (`.zarray`, `zarr.json` or `.zgroup`). The
 plugin opens:
 - Zarr v2 and v3 arrays with 2 to 5 axes, as hyperstacks with channel and time sliders
 - OME-Zarr images (their full-resolution level, with its pixel size)

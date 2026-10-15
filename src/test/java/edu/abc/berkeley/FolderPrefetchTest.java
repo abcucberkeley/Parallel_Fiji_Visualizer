@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.After;
 import org.junit.BeforeClass;
@@ -278,6 +279,61 @@ public class FolderPrefetchTest {
 		for (Thread t : Thread.getAllStackTraces().keySet())
 			if (t.getName().startsWith("PFV folder reader") && t.isAlive()) n++;
 		return n;
+	}
+
+	/**
+	 * Natives that cannot be loaded (an Intel Fiji on an Apple-silicon Mac, say)
+	 * give the loader's error with or without reading ahead, instead of leaving
+	 * the opener waiting for readers that could not start. A PNG comes first,
+	 * so the folder's first look loads no natives. Natives load once per JVM,
+	 * so the folder is opened in JVMs of their own, with an empty natives folder.
+	 */
+	@Test
+	public void nativesThatCannotLoadFailTheSame() throws Exception {
+		File dir = tmp.newFolder("noNatives");
+		assertTrue(new FileSaver(new ImagePlus("a", new ByteProcessor(W, H))).saveAsPng(new File(dir, "a.png").getPath()));
+		for (int f = 0; f < 6; f++) {
+			ByteProcessor ip = new ByteProcessor(W, H);
+			fill(ip, f, 0);
+			assertTrue(new FileSaver(new ImagePlus("b" + f, ip)).saveAsTiff(new File(dir, "b" + f + ".tif").getPath()));
+		}
+		File natives = tmp.newFolder("emptyNatives");
+		String one = openElsewhere(dir, natives, 1), six = openElsewhere(dir, natives, 6);
+		assertTrue(one, one.startsWith("java.lang.UnsatisfiedLinkError"));
+		assertEquals(one, six);
+	}
+
+	/** What opening the folder threw, in a JVM of its own loading natives from the folder given. */
+	private static String openElsewhere(File dir, File natives, int readers) throws Exception {
+		File java = new File(System.getProperty("java.home"), "bin/java.exe");
+		if (!java.exists()) java = new File(System.getProperty("java.home"), "bin/java");
+		File out = new File(natives.getParentFile(), "opened" + readers + ".txt");
+		Process p = new ProcessBuilder(java.getPath(), "-Djava.awt.headless=true", "-Dpfv.natives.dir=" + natives.getPath(),
+			"-D" + FolderPrefetch.READERS_PROPERTY + "=" + readers, "-cp", System.getProperty("java.class.path"),
+			OpenFolder.class.getName(), dir.getPath()).redirectErrorStream(true).redirectOutput(out).start();
+		if (!p.waitFor(60, TimeUnit.SECONDS)) {
+			p.destroyForcibly();
+			fail(readers + " readers: the folder was still opening after 60 s");
+		}
+		String output = new String(Files.readAllBytes(out.toPath()), StandardCharsets.UTF_8);
+		for (String line : output.split("\\R"))
+			if (line.startsWith("threw ")) return line.substring("threw ".length());
+		fail(readers + " readers: " + output);
+		return null;
+	}
+
+	/** Opens the folder given and prints what that threw. */
+	public static class OpenFolder {
+		public static void main(String[] args) {
+			try {
+				ParallelFolderOpener.open(args[0], "", null);
+				System.out.println("opened");
+			}
+			catch (Throwable e) {
+				System.out.println("threw " + e);
+			}
+			System.exit(0);
+		}
 	}
 
 	/** The readers' thread limits are their own: the opener's thread keeps every core. */
