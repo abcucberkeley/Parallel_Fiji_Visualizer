@@ -5,6 +5,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -166,7 +167,7 @@ public class NativeRoundTripTest {
 	public void zarrInt8ShiftsSignBit() throws Exception {
 		byte[][] slices = byteSlices();
 		String path = writeZarr(slices, 8, "i8.zarr");
-		flipDtype(path, "<u1", "<i1");
+		flipDtype(path, "|u1", "|i1");
 		byte[][] back = reader.parallelReadZarrINT8(path, 0, 0, 0, H, W, Z);
 		for (int s = 0; s < Z; s++)
 			for (int i = 0; i < W * H; i++)
@@ -234,5 +235,91 @@ public class NativeRoundTripTest {
 		String path = new File(tmp.getRoot(), "badDest.tif").getPath();
 		writer.parallelWriteTiff(path, slices, W, H, Z, 16);
 		reader.parallelReadTiffUINT16(path, new short[Z][W * H - 1]);
+	}
+	// --- Errors must surface as exceptions, never take Fiji down ---
+
+	/**
+	 * cpp-zarr throws C++ exceptions for metadata it cannot use; one escaping
+	 * the JNI layer aborted the whole JVM, so dropping such a folder killed Fiji.
+	 */
+	@Test
+	public void notAZarrFolderThrowsInsteadOfCrashing() throws Exception {
+		String path = tmp.newFolder("empty.zarr").getPath();
+		for (int call = 0; call < 3; call++) {
+			try {
+				if (call == 0) reader.getZarrDataType(path);
+				else if (call == 1) reader.getZarrDims(path);
+				else reader.getZarrDtype(path);
+				fail("no exception for a folder without Zarr metadata (call " + call + ")");
+			}
+			catch (RuntimeException e) {
+				assertTrue(e.getMessage(), e.getMessage().contains("Zarr"));
+			}
+		}
+	}
+
+	/**
+	 * cpp-tiff reports failed writes since 1.7.0; they must not pass silently.
+	 * (Missing parent folders are created, so the path goes under a file.)
+	 */
+	@Test(expected = RuntimeException.class)
+	public void tiffWriteFailureIsReported() throws Exception {
+		File notAFolder = tmp.newFile("not-a-folder");
+		writer.parallelWriteTiff(new File(notAFolder, "x.tif").getPath(), shortSlices(), W, H, Z, 16);
+	}
+
+	@Test(expected = RuntimeException.class)
+	public void zarrWriteFailureIsReported() throws Exception {
+		File notAFolder = tmp.newFile("not-a-folder");
+		String path = new File(notAFolder, "x.zarr").getPath();
+		writer.parallelWriteZarr(path, shortSlices(), 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
+	}
+
+	/** zarr-python 3 refuses one-byte arrays named "<u1"; NumPy's name is "|u1". */
+	@Test
+	public void zarrByteDtypeHasNoByteOrder() {
+		String path = writeZarr(byteSlices(), 8, "u8.zarr");
+		assertEquals("|u1", reader.getZarrDtype(path));
+	}
+
+	// --- 16-bit floats, which ImageJ shows as 32-bit float ---
+
+	private static short[][] repeat(short[] pattern) {
+		short[][] slices = new short[Z][W * H];
+		for (int s = 0; s < Z; s++)
+			for (int i = 0; i < W * H; i++)
+				slices[s][i] = pattern[(i + s) % pattern.length];
+		return slices;
+	}
+
+	private static void assertSameFloats(short[] pattern, float[] expected, float[][] back) {
+		for (int s = 0; s < Z; s++)
+			for (int i = 0; i < W * H; i++)
+				assertEquals("slice " + s + " index " + i, Float.floatToIntBits(expected[(i + s) % expected.length]),
+					Float.floatToIntBits(back[s][i]));
+	}
+
+	@Test
+	public void zarrFloat16ReadsAsExactFloat() throws Exception {
+		// normal, negative, largest, smallest subnormal, smallest normal, 1365/4096, infinity, -0
+		short[] half = { 0x3C00, (short) 0xC000, 0x7BFF, 0x0001, 0x0400, 0x3555, 0x7C00, (short) 0x8000 };
+		float[] value = { 1f, -2f, 65504f, Math.scalb(1f, -24), Math.scalb(1f, -14), 1365f / 4096f,
+			Float.POSITIVE_INFINITY, -0f };
+		String path = writeZarr(repeat(half), 16, "f16.zarr");
+		flipDtype(path, "<u2", "<f2");
+		assertEquals("<f2", reader.getZarrDtype(path));
+		assertSameFloats(half, value, reader.parallelReadZarrFLOAT16(path, 0, 0, 0, H, W, Z, false));
+	}
+
+	@Test
+	public void zarrBfloat16ReadsAsExactFloat() throws Exception {
+		// bfloat16 is the top half of a float
+		short[] bf = { 0x3F80, (short) 0xC000, 0x4049, (short) 0xFF80, 0x0001 };
+		float[] value = new float[bf.length];
+		for (int k = 0; k < bf.length; k++) value[k] = Float.intBitsToFloat((bf[k] & 0xFFFF) << 16);
+		String path = writeZarr(repeat(bf), 16, "bf16.zarr");
+		flipDtype(path, "<u2", "bfloat16");
+		assertEquals("bfloat16", reader.getZarrDtype(path));
+		assertSameFloats(bf, value, reader.parallelReadZarrFLOAT16(path, 0, 0, 0, H, W, Z, true));
 	}
 }

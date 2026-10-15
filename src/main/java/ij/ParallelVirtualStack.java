@@ -3,7 +3,6 @@ import ij.process.*;
 import ij.io.*;
 import ij.gui.ImageCanvas;
 import ij.util.Tools;
-import ij.plugin.FolderOpener;
 import java.io.*;
 import java.lang.reflect.Array;
 import java.awt.*;
@@ -11,7 +10,7 @@ import java.awt.image.ColorModel;
 import java.util.Arrays;
 import java.util.Properties;
 
-import edu.abc.berkeley.PRZ;
+import edu.abc.berkeley.ZarrImage;
 
 /** This class represents an array of disk-resident images. */
 public class ParallelVirtualStack extends ImageStack {
@@ -32,13 +31,33 @@ public class ParallelVirtualStack extends ImageStack {
 	// chunk row (256 planes deep for typical zarrs) must be decompressed either
 	// way, and each extra plane only adds its copy-out. Measured on a
 	// 11985x48696x1100 uint16 zarr with 32 cores: 20 s for 1 plane, 28.6 s for
-	// 8, 80 s for 32. So planes are fetched in aligned blocks and served from
-	// memory while the user scrolls. The previous block is kept as well, so
-	// stepping back across a block boundary is free.
+	// 8, 80 s for 32. So planes are fetched in aligned blocks along z (of one
+	// channel and time point) and served from memory while the user scrolls.
+	// The previous block is kept as well, so stepping back across a block
+	// boundary, or between two channels, is free.
+	private ZarrImage zarr;
+	private long x0, y0, z0;          // the window's corner in the image
+	private int depth = 1, channels = 1;
 	private int maxBlockPlanes = 16;   // caps the stall of a single fetch
-	private ImagePlus block, previousBlock;
-	private int blockStart = -1, previousBlockStart = -1;   // 0-based first plane
+	private Block block, previousBlock;
 	private int blockReads = 0;
+
+	/** Planes [start, start + planes.length) along z of one channel and time point (0-based). */
+	private static final class Block {
+		final int c, t, start;
+		final Object[] planes;
+
+		Block(int c, int t, int start, Object[] planes) {
+			this.c = c;
+			this.t = t;
+			this.start = start;
+			this.planes = planes;
+		}
+
+		boolean holds(int c, int t, int z) {
+			return this.c == c && this.t == t && z >= start && z < start + planes.length;
+		}
+	}
 
 	/** Upper limit on planes fetched per block read (default 16); free memory may lower it. */
 	public void setMaxBlockPlanes(int planes) {
@@ -65,37 +84,31 @@ public class ParallelVirtualStack extends ImageStack {
 		return Integer.highestOneBit((int) k);
 	}
 
-	private ImagePlus readBlock(int plane, int start, int end) {
-		return new PRZ(path+names[plane], 0, 0, start, height, width, end, false).getImp();
-	}
-
-	/** The in-memory block holding plane n (1-based), reading it if needed. */
-	private ImagePlus blockFor(int n) {
-		int plane = n - 1;
-		if (block != null && plane >= blockStart && plane < blockStart + block.getStackSize())
-			return block;
-		if (previousBlock != null && plane >= previousBlockStart
-				&& plane < previousBlockStart + previousBlock.getStackSize()) {
-			ImagePlus b = previousBlock;
-			int start = previousBlockStart;
+	/** The pixels of plane n (1-based, in czt order), reading its block if needed. */
+	private Object pixelsOf(int n) {
+		if (zarr == null) throw new IllegalStateException("This virtual stack has no Zarr image to read");
+		int i = n - 1;
+		int c = i % channels, z = (i / channels) % depth, t = i / (channels * depth);
+		if (block != null && block.holds(c, t, z))
+			return block.planes[z - block.start];
+		if (previousBlock != null && previousBlock.holds(c, t, z)) {
+			Block b = previousBlock;
 			previousBlock = block;
-			previousBlockStart = blockStart;
 			block = b;
-			blockStart = start;
-			return block;
+			return block.planes[z - block.start];
 		}
 		previousBlock = block;   // the block evicted here becomes garbage before the read allocates
-		previousBlockStart = blockStart;
 		block = null;
 		blockReads++;
 		for (;;) {
 			int k = planesPerBlock();
-			int start = (plane / k) * k;
-			int end = Math.min(start + k, nSlices);
+			int start = (z / k) * k;
+			int end = Math.min(start + k, depth);
 			try {
-				block = readBlock(plane, start, end);
-				blockStart = start;
-				return block;
+				Object[] planes = zarr.read(new long[] { x0, y0, z0 + start, c, t },
+					new long[] { x0 + getWidth(), y0 + getHeight(), z0 + end, c + 1, t + 1 }, "Reading " + zarr.title);
+				block = new Block(c, t, start, planes);
+				return block.planes[z - start];
 			}
 			catch (OutOfMemoryError e) {
 				if (k == 1) throw e;
@@ -108,8 +121,6 @@ public class ParallelVirtualStack extends ImageStack {
 		}
 	}
 
-
-	
 	/** Default constructor. */
 	public ParallelVirtualStack() { }
 	
@@ -132,22 +143,36 @@ public class ParallelVirtualStack extends ImageStack {
 		names = new String[INITIAL_SIZE];
 		labels = new String[INITIAL_SIZE];
 	}
-	
-	// TESTING
+
+	/**
+	 * The Zarr image in the folder path: its planes [0, depth) of every channel
+	 * and time point, width x height from the corner.
+	 */
 	public ParallelVirtualStack(int width, int height, int depth, ColorModel cm, String path) {
-		super(width, height, cm);
-		this.height = height;
+		this(ZarrImage.open(new File(path)), 0, 0, 0, width, height, depth);
+	}
+
+	/**
+	 * A window of a Zarr image, read as it is shown: width x height from
+	 * (x0, y0), the planes [z0, z0 + depth) of every channel and time point,
+	 * in ImageJ's czt order.
+	 */
+	public ParallelVirtualStack(ZarrImage zarr, long x0, long y0, long z0, int width, int height, int depth) {
+		super(width, height, null);
+		this.zarr = zarr;
+		this.x0 = x0;
+		this.y0 = y0;
+		this.z0 = z0;
 		this.width = width;
-		path = IJ.addSeparator(path);
-		this.path = path;
-		names = new String[depth];
-		//Arrays.fill(names,path);
-		
-		labels = new String[depth];
-		nSlices = 0;
-		for(int i = 0; i < depth; i++) {
-			this.addSlice("");
-		}
+		this.height = height;
+		this.depth = depth;
+		this.channels = (int) zarr.channels();
+		this.path = IJ.addSeparator(zarr.path);
+		this.bitDepth = zarr.displayBits();
+		nSlices = channels * depth * (int) zarr.frames();
+		names = new String[Math.max(1, nSlices)];
+		labels = new String[Math.max(1, nSlices)];
+		Arrays.fill(names, "");
 	}
 
 	/** Creates a virtual stack with no backing storage.
@@ -268,58 +293,17 @@ public class ParallelVirtualStack extends ImageStack {
 			return ip;
 		}
 		n = translate(n);  // update n for hyperstacks not in the default CZT order
-		IJ.redirectErrorMessages(true);
-		ImagePlus imp;
-		int sliceInBlock;
+		Object pixels;
 		synchronized (this) {
-			imp = blockFor(n);
-			sliceInBlock = n - blockStart;
+			pixels = pixelsOf(n);
 		}
-		IJ.redirectErrorMessages(false);
-		ImageProcessor ip = null;
-		int depthThisImage = 0;
-		if (imp!=null) {
-			int w = imp.getWidth();
-			int h = imp.getHeight();
-			int type = imp.getType();
-			ColorModel cm = imp.getProcessor().getColorModel();
-			String info = (String)imp.getProperty("Info");
-			if (info!=null) {
-				if (FolderOpener.useInfo(info))
-					labels[n-1] = info;
-			} else {
-				String sliceLabel = imp.getStack().getSliceLabel(1);
-				if (FolderOpener.useInfo(sliceLabel))
-					labels[n-1] = "Label: "+sliceLabel;
-			}
-			depthThisImage = imp.getBitDepth();
-			ip = imp.getStack().getProcessor(sliceInBlock);
-			ip.setOverlay(imp.getOverlay());
-			properties = imp.getProperty("FHT")!=null?imp.getProperties():null;
-		} else {
-			File f = new File(path, names[n-1]);
-			String msg = f.exists()?"Error opening ":"File not found: ";
-			ip = new ByteProcessor(getWidth(), getHeight());
-			ip.invert();
-			label(ip, msg+names[n-1], Color.black);
-			depthThisImage = 8;
-		}
-		if (depthThisImage!=bitDepth) {
-			switch (bitDepth) {
-				case 8: ip=ip.convertToByte(true); break;
-				case 16: ip=ip.convertToShort(true); break;
-				case 24:  ip=ip.convertToRGB(); break;
-				case 32: ip=ip.convertToFloat(); break;
-			}
-		}
-		if (ip.getWidth()!=getWidth() || ip.getHeight()!=getHeight()) {
-			ImageProcessor ip2 = ip.createProcessor(getWidth(), getHeight());
-			ip2.insert(ip, 0, 0);
-			ip = ip2;
-		}
-		return ip;
+		int w = getWidth(), h = getHeight();
+		if (pixels instanceof byte[])
+			return new ByteProcessor(w, h, (byte[]) pixels);
+		if (pixels instanceof short[])
+			return new ShortProcessor(w, h, (short[]) pixels, null);
+		return new FloatProcessor(w, h, (float[]) pixels);
 	 }
-	 	 
 	 private void label(ImageProcessor ip, String msg, Color color) {
 		int size = getHeight()/20;
 		if (size<9) size=9;

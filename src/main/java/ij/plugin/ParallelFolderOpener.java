@@ -11,6 +11,7 @@ import edu.abc.berkeley.PRT;
 import edu.abc.berkeley.PRZ;
 import edu.abc.berkeley.ProgressEstimator;
 import edu.abc.berkeley.SeriesLayout;
+import edu.abc.berkeley.ZarrMetadata;
 import ij.*;
 import ij.io.*;
 import ij.gui.*;
@@ -170,8 +171,8 @@ public class ParallelFolderOpener implements PlugIn {
 		ArrayList fileList = new ArrayList();
 		for (int i=0; i<list.length; i++) {
 			File f = new File(directory, list[i]);
-			//Matt
-			if (!f.isDirectory() || list[i].endsWith(".zarr"))
+			//Matt: Zarr images are folders, told apart by their metadata
+			if (!f.isDirectory() || ZarrMetadata.isImage(f))
 				fileList.add(list[i]);
 		}
 		if (fileList.size()<list.length)
@@ -217,11 +218,11 @@ public class ParallelFolderOpener implements PlugIn {
 				//ImagePlus imp = opener.openImage(directory, list[i]);
 				ImagePlus imp = null;
 				String cFile = directory+File.separator+list[i]; 
-				if(cFile.endsWith(".tif")) {
+				if(PRT.isTiff(cFile)) {
 					PRT prt = new PRT(cFile,false);
 					imp = prt.getImp();
 				}
-				else if(cFile.endsWith(".zarr")) {
+				else if(ZarrMetadata.isZarr(new File(cFile))) {
 					PRZ prz = new PRZ(cFile,false);
 					imp = prz.getImp();
 				}
@@ -271,10 +272,10 @@ public class ParallelFolderOpener implements PlugIn {
 				tOpener.setSilentMode(true);
 				for (int i=this.start-1; i<list.length; i++) {
 					String cFile = directory+File.separator+list[i]; 
-					if(cFile.endsWith(".tif")) {
+					if(PRT.isTiff(cFile)) {
 						PRT prt = new PRT(cFile);
 					}
-					else if(cFile.endsWith(".zarr")) {
+					else if(ZarrMetadata.isZarr(new File(cFile))) {
 						PRZ prz = new PRZ(cFile);
 					}
 					else {
@@ -392,11 +393,11 @@ public class ParallelFolderOpener implements PlugIn {
 				} else if (!openAsVirtualStack||stack==null) {
 					//imp = opener.openImage(directory, list[i]);
 					String cFile = directory+File.separator+files[i]; 
-					if(cFile.endsWith(".tif")) {
+					if(PRT.isTiff(cFile)) {
 						PRT prt = new PRT(cFile,false);
 						imp = prt.getImp();
 					}
-					else if(cFile.endsWith(".zarr")) {
+					else if(ZarrMetadata.isZarr(new File(cFile))) {
 						PRZ prz = new PRZ(cFile,false);
 						imp = prz.getImp();
 					}

@@ -1,18 +1,22 @@
 package edu.abc.berkeley;
 
+import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.Insets;
 import java.awt.dnd.DropTarget;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 
+import ij.IJ;
 import ij.io.OpenDialog;
 
 public class DragDropFrame extends JFrame{
@@ -92,6 +96,47 @@ public class DragDropFrame extends JFrame{
 	        //JLabel myLabel = new JLabel("Drag something here!", SwingConstants.CENTER);
 	        JLabel myLabel = new JLabel("Drag something here!", SwingConstants.HORIZONTAL);
 	        this.add(myLabel,c);
+
+	        // The axis order of Zarr arrays whose metadata does not name their
+	        // axes (see ZarrAxisOrder); typed orders take effect on Enter
+	        JPanel axesPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
+	        JLabel axesLabel = new JLabel("Zarr axis order:");
+	        final JComboBox<String> axesBox = new JComboBox<String>(ZarrAxisOrder.PRESETS);
+	        axesBox.setEditable(true);
+	        axesBox.setSelectedItem(ZarrAxisOrder.get());
+	        String tip = "<html>For Zarr arrays whose metadata does not name their axes, the order of the<br>"
+	        	+ "array's axes in the letters x, y, z, c (channels) and t (time), e.g. <b>tzyxc</b>.<br>"
+	        	+ "An order applies to arrays with that many axes; give several with commas,<br>"
+	        	+ "e.g. <b>yxz, tzyxc</b>. <b>Auto</b> guesses. Named axes are always read as named.</html>";
+	        axesLabel.setToolTipText(tip);
+	        axesBox.setToolTipText(tip);
+	        axesBox.addActionListener(new ActionListener() {
+
+	            @Override
+	            public void actionPerformed(ActionEvent e) {
+	            	String typed = String.valueOf(axesBox.getSelectedItem());
+	            	try {
+	            		ZarrAxisOrder.set(typed);
+	            	}
+	            	catch (IllegalArgumentException x) {
+	            		IJ.error("Zarr axis order", x.getMessage());
+	            	}
+	            	// Show the order in use (normalized, or the old one after an
+	            	// error); the event this fires finds nothing left to change
+	            	String now = ZarrAxisOrder.get();
+	            	if (!now.equals(typed)) axesBox.setSelectedItem(now);
+	            }
+	        });
+	        axesPanel.add(axesLabel);
+	        axesPanel.add(axesBox);
+	        c.fill = GridBagConstraints.NONE;
+	        c.anchor = GridBagConstraints.PAGE_END;
+	        c.weighty = 0;
+	        c.insets = new Insets(0, 0, 10, 0);
+	        c.gridx = 0;
+	        c.gridy = 2;
+	        c.gridwidth = 3;
+	        this.add(axesPanel,c);
 	        
 
 	        // Create the drag and drop listener

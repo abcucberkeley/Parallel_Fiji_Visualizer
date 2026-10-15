@@ -82,10 +82,10 @@ message(STATUS "Native libraries will be staged into: ${STAGE_DIRS}")
 # (BUILD_SHARED_LIBS, SKIP_INSTALL_ALL, ...) which would leak into this build
 # under add_subdirectory/FetchContent.
 # ---------------------------------------------------------------------------
-set(CPP_TIFF_VERSION v1.6.2)
-set(CPP_TIFF_SHA256 0e7b0c698695b3233ca30b8b05a14e2c110434d137219c876e5990c5cea26b79)
-set(CPP_ZARR_VERSION v1.5.2)
-set(CPP_ZARR_SHA256 c11bd910fc4f95b2a1519247fb9b88a03f24e69ffc2fa353c2cc80fbd93c542a)
+set(CPP_TIFF_VERSION v1.7.1)
+set(CPP_TIFF_SHA256 f864c081214262191e2e5b6ef3d4ddb13aefbb66a75bbd4810b7beb470964273)
+set(CPP_ZARR_VERSION v1.7.1)
+set(CPP_ZARR_SHA256 bbd586b8b2aa3207dc46198b296d445c467b224c0146c915169312d0b335e3f5)
 
 set(DEPS_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/deps")
 set(TIFF_PREFIX "${DEPS_PREFIX}/cpp-tiff")

@@ -2,9 +2,7 @@ package edu.abc.berkeley;
 
 
 import java.util.List;
-
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang.SystemUtils;
+import java.util.Locale;
 
 import ij.IJ;
 import ij.ImagePlus;
@@ -82,7 +80,9 @@ class DragDropListener implements DropTargetListener {
                     	}
                     	
                     	if (file.isDirectory()) {
-                    		if(fName.endsWith(".zarr")) {
+                    		// A folder is a Zarr by its metadata, whatever its name; one
+                    		// named .zarr without any gets PRZ's message saying so
+                    		if(ZarrMetadata.isZarr(file) || fName.toLowerCase(Locale.ROOT).endsWith(".zarr")) {
                     			openInBackground(() -> new PRZ(fName));
                     		}
                     		else {
@@ -93,14 +93,11 @@ class DragDropListener implements DropTargetListener {
                     		}
                     		continue;
                     	}
-                    	// Check if the tiff extension is correct
-                    	else if(!(fName.endsWith(".tif") || fName.endsWith(".tiff"))) {
-                    		// Check if Windows destroyed the name because it can't handle paths greater than 256 chars
-                    		// the contains function doesn't work so I have to do this. It's a Windows thing I suppose
-                    		if(!SystemUtils.IS_OS_WINDOWS || fName.length() < 4 || StringUtils.difference(fName.substring(fName.length()-4),".TIF") != "") {
-                    			IJ.log(fName + " does not contain the .tif/.tiff or .zarr extension.");
-                    			continue;
-                    		}
+                    	// Check if the tiff extension is correct (in any case: Windows
+                    	// gives paths longer than 256 characters short names like X~1.TIF)
+                    	else if(!PRT.isTiff(fName)) {
+                    		IJ.log(fName + " is not a TIFF file (.tif or .tiff) or a Zarr folder.");
+                    		continue;
                     	}
                     	
                     	if (file.isFile()) openInBackground(() -> new PRT(fName));

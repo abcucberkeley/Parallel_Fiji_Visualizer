@@ -42,7 +42,9 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZa
 	const uint64_t bits = (uint64_t)jBits;
 	std::string dtype;
 	switch (bits) {
-		case 8: dtype = "<u1"; break;
+		// One-byte types have no byte order: NumPy names them "|u1", and
+		// zarr-python 3 refuses arrays that say "<u1".
+		case 8: dtype = "|u1"; break;
 		case 16: dtype = "<u2"; break;
 		case 32: dtype = "<f4"; break;
 		default:
@@ -104,14 +106,34 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteZa
 
 		Zarr.write_zarray();
 		Zarr.set_chunkInfo(startCoords, endCoords);
-		parallelWriteZarr(Zarr, ordered, startCoords, endCoords, writeShape, bits,
+		const uint8_t failed = parallelWriteZarr(Zarr, ordered, startCoords, endCoords, writeShape, bits,
 			jUseUuid != 0, jCrop != 0, true);
 		free(ordered);
 		ordered = nullptr;
+		if (failed) pfv::throwRuntime(env, "Writing the Zarr failed (is the disk full or the folder not writable?)");
+	}
+	// cpp-zarr reports problems by throwing std::string. Nothing may escape a
+	// JNI function: an uncaught C++ exception aborts the JVM, taking Fiji with it.
+	catch (const std::string& why) {
+		free(raw);
+		free(ordered);
+		pfv::throwRuntime(env, pfv::zarrError(why).c_str());
 	}
 	catch (const std::exception& e) {
 		free(raw);
 		free(ordered);
 		pfv::throwRuntime(env, e.what());
 	}
+	catch (...) {
+		free(raw);
+		free(ordered);
+		pfv::throwRuntime(env, "Writing the Zarr failed");
+	}
+}
+
+// Runs when Java loads this library; see primeUnwinder in jni_marshal.h.
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM*, void*)
+{
+	pfv::primeUnwinder();
+	return JNI_VERSION_1_6;
 }

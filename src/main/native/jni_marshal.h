@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 // Shared helpers for moving image data between JNI arrays and native buffers.
@@ -45,6 +46,88 @@ inline void throwRuntime(JNIEnv* env, const char* msg) {
 	if (env->ExceptionCheck()) return;
 	jclass cls = env->FindClass("java/lang/RuntimeException");
 	if (cls != nullptr) env->ThrowNew(cls, msg);
+}
+
+// Called from JNI_OnLoad of each JNI library. cpp-tiff and cpp-zarr each link
+// a private copy of the C++ runtime and GCC's unwinder (-static-libstdc++
+// -static-libgcc); our libraries take their C++ runtime from libcppTiff's
+// exported copy. A cpp-zarr exception is therefore unwound by cpp-zarr's
+// unwinder but handled in our frames by cpp-tiff's personality routine, whose
+// unwinder helpers (GCC < 14) fill their register-size table only the first
+// time their own unwinder runs; until then they abort the process. Throwing
+// and catching once here fills that table, so catching cpp-zarr's exceptions
+// works. (GCC supports exceptions across shared libraries only with a shared
+// libgcc; all libraries here come from one compiler, so the layouts match.)
+inline void primeUnwinder() {
+	try {
+		throw 0;
+	}
+	catch (int) {
+	}
+}
+
+// cpp-zarr throws std::string codes such as "metadataFileMissing:<path>" or
+// "metadataUnsupported:<reason>"; turn them into messages a user can act on.
+inline std::string zarrError(const std::string& code) {
+	const size_t colon = code.find(':');
+	const std::string kind = code.substr(0, colon);
+	const std::string detail = colon == std::string::npos ? "" : code.substr(colon + 1);
+	if (kind == "metadataFileMissing" || kind == "cannotOpenZarray")
+		return "No Zarr metadata found" + (detail.empty() ? std::string() : " (" + detail + ")") + "; is this a Zarr array?";
+	if (kind == "metadataIncomplete")
+		return "The Zarr metadata is incomplete or invalid" + (detail.empty() ? std::string() : ": " + detail);
+	if (kind == "metadataUnsupported" || kind == "zarrFormatUnsupported")
+		return "This Zarr array is not supported" + (detail.empty() ? std::string() : ": " + detail);
+	if (kind == "unsupportedCompressor")
+		return "This Zarr array uses a compressor that is not supported";
+	return "Zarr error: " + code;
+}
+
+// IEEE 754 half precision to float. Exact: every half value is a float.
+inline float halfToFloat(uint16_t h) {
+	const uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+	uint32_t exponent = (h >> 10) & 0x1Fu;
+	uint32_t mantissa = h & 0x3FFu;
+	uint32_t bits;
+	if (exponent == 0x1Fu) {
+		bits = sign | 0x7F800000u | (mantissa << 13); // infinity or NaN
+	}
+	else if (exponent != 0) {
+		bits = sign | ((exponent + 112) << 23) | (mantissa << 13); // rebias 15 -> 127
+	}
+	else if (mantissa == 0) {
+		bits = sign; // +-0
+	}
+	else {
+		exponent = 113; // subnormal: shift the leading 1 into the implicit bit
+		while (!(mantissa & 0x400u)) {
+			mantissa <<= 1;
+			exponent--;
+		}
+		bits = sign | (exponent << 23) | ((mantissa & 0x3FFu) << 13);
+	}
+	float f;
+	memcpy(&f, &bits, sizeof f);
+	return f;
+}
+
+// bfloat16 is the top half of a float.
+inline float bfloat16ToFloat(uint16_t b) {
+	const uint32_t bits = (uint32_t)b << 16;
+	float f;
+	memcpy(&f, &bits, sizeof f);
+	return f;
+}
+
+// Convert float16 or bfloat16 samples to float (ImageJ has no 16-bit float type).
+inline float* float16ToFloat(const uint16_t* src, uint64_t n, bool bfloat16) {
+	float* dst = (float*)malloc(n * sizeof(float));
+	if (dst == nullptr) return nullptr;
+	#pragma omp parallel for
+	for (int64_t i = 0; i < (int64_t)n; i++) {
+		dst[i] = bfloat16 ? bfloat16ToFloat(src[i]) : halfToFloat(src[i]);
+	}
+	return dst;
 }
 
 // Copy n equally sized planes with all cores in ONE parallel region. Forking
@@ -88,10 +171,12 @@ inline uint64_t planesPerBatch(uint64_t sliceBytes) {
 // single-threaded and could not take more than INT_MAX/2 elements per call.
 // With dest (a T[nSlices][sliceElems] allocated by the caller, e.g. from all
 // cores at once) the planes are filled in place; a dest that does not match
-// the image is rejected with an exception rather than written past.
+// the image is rejected with an exception rather than written past. With
+// offsets, slice i is copied from data + offsets[i] instead of following the
+// one before it, so planes stored in another order need no reordering copy.
 template <typename T>
 jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint64_t nSlices,
-                          jobjectArray dest = nullptr) {
+                          jobjectArray dest = nullptr, const uint64_t* offsets = nullptr) {
 	using Traits = JniArrayTraits<T>;
 	jobjectArray outer = dest;
 	if (dest == nullptr) {
@@ -143,7 +228,7 @@ jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint6
 				return nullptr;
 			}
 			dst.push_back(p);
-			src.push_back(data + (start + k) * sliceElems);
+			src.push_back(data + (offsets != nullptr ? offsets[start + k] : (start + k) * sliceElems));
 		}
 		copyPlanes(dst.data(), src.data(), (int64_t)dst.size(), sliceBytes);
 		for (size_t k = 0; k < dst.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], dst[k], 0);

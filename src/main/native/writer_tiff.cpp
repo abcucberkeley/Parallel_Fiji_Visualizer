@@ -34,7 +34,10 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteTi
 	}
 	// "lzw" preserves the plugin's historical output; cpp-tiff also accepts
 	// "zstd" and "none" should we ever expose a compression choice in the UI.
-	writeTiffParallelHelper(fName, buf, (uint64_t)bits, "w", ux, uy, uz, 0, false, "lzw");
+	// Since cpp-tiff 1.7.0 a failed write (full disk, quota, unwritable path)
+	// is reported with a nonzero return instead of leaving a partial file.
+	const uint8_t failed = writeTiffParallelHelper(fName, buf, (uint64_t)bits, "w", ux, uy, uz, 0, false, "lzw");
 	env->ReleaseStringUTFChars(fileName, fName);
 	free(buf);
+	if (failed) pfv::throwRuntime(env, "Writing the TIFF failed (is the disk full or the folder not writable?)");
 }

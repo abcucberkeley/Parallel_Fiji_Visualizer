@@ -147,84 +147,195 @@ public class ParallelReadNative {
 	public native long[] getTiffDims(String fileName);
 
 	// --- Zarr ---
-	// Windows are [start, end) in each dimension; dest holds (endZ-startZ)
-	// planes of (endX-startX)*(endY-startY) elements.
+	// A read takes the window [start, end), one value per axis of the array,
+	// and axes = {x, y, z, c, t}: the axes that are the image's columns, rows,
+	// planes, channels and time points (-1 for the last three when absent).
+	// Every other axis must have extent 1 in the window. dest holds the planes
+	// in ImageJ's czt order (plane c + C*(z + Z*t)), each of x*y elements.
+	//
+	// The overloads taking startX..endZ read 3D arrays laid out as the plugin
+	// writes them (MATLAB's order): X is axis 0 (rows), Y axis 1 (columns) and
+	// Z axis 2 (planes).
 
-	public native byte[][] parallelReadZarrUINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, byte[][] dest);
+	/** The {x, y, z, c, t} axes of a 3D array in MATLAB's (rows, columns, planes) order. */
+	private static final int[] MATLAB_3D_AXES = { 1, 0, 2, -1, -1 };
+
+	/** The number of planes a window holds: its extent along z, c and t. */
+	public static long planes(long[] start, long[] end, int[] axes) {
+		long n = 1;
+		for (int i = 2; i < 5; i++)
+			if (axes[i] >= 0) n *= end[axes[i]] - start[axes[i]];
+		return n;
+	}
+
+	/** The elements of each of a window's planes: its extent along x times y. */
+	public static long planeElements(long[] start, long[] end, int[] axes) {
+		return (end[axes[0]] - start[axes[0]]) * (end[axes[1]] - start[axes[1]]);
+	}
+
+	public native byte[][] parallelReadZarrUINT8(String fileName, long[] start, long[] end, int[] axes, byte[][] dest);
+
+	public byte[][] parallelReadZarrUINT8(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrUINT8(fileName, start, end, axes, newBytePlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public byte[][] parallelReadZarrUINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, byte[][] dest) {
+		return parallelReadZarrUINT8(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public byte[][] parallelReadZarrUINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrUINT8(fileName, startX, startY, startZ, endX, endY, endZ,
-			newBytePlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrUINT8(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
-	public native short[][] parallelReadZarrUINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, short[][] dest);
+	public native short[][] parallelReadZarrUINT16(String fileName, long[] start, long[] end, int[] axes, short[][] dest);
+
+	public short[][] parallelReadZarrUINT16(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrUINT16(fileName, start, end, axes, newShortPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public short[][] parallelReadZarrUINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, short[][] dest) {
+		return parallelReadZarrUINT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public short[][] parallelReadZarrUINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrUINT16(fileName, startX, startY, startZ, endX, endY, endZ,
-			newShortPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrUINT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
-	public native float[][] parallelReadZarrFLOAT(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrFLOAT(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrFLOAT(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrFLOAT(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrFLOAT(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrFLOAT(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrFLOAT(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrFLOAT(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrFLOAT(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** 64-bit images are converted to float: ImageStack has no double support. */
-	public native float[][] parallelReadZarrDOUBLE(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrDOUBLE(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrDOUBLE(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrDOUBLE(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrDOUBLE(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrDOUBLE(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrDOUBLE(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrDOUBLE(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrDOUBLE(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
+	}
+
+	/**
+	 * float16 or (with bfloat16) bfloat16 zarrs, converted to float: ImageJ has
+	 * no 16-bit float type. The conversion is exact.
+	 */
+	public native float[][] parallelReadZarrFLOAT16(String fileName, long[] start, long[] end, int[] axes, boolean bfloat16, float[][] dest);
+
+	public float[][] parallelReadZarrFLOAT16(String fileName, long[] start, long[] end, int[] axes, boolean bfloat16) {
+		return parallelReadZarrFLOAT16(fileName, start, end, axes, bfloat16, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrFLOAT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, boolean bfloat16, float[][] dest) {
+		return parallelReadZarrFLOAT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, bfloat16, dest);
+	}
+
+	public float[][] parallelReadZarrFLOAT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, boolean bfloat16) {
+		return parallelReadZarrFLOAT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, bfloat16);
 	}
 
 	/** Signed 8-bit zarrs, shifted to 0-255; a calibration maps values back. */
-	public native byte[][] parallelReadZarrINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, byte[][] dest);
+	public native byte[][] parallelReadZarrINT8(String fileName, long[] start, long[] end, int[] axes, byte[][] dest);
+
+	public byte[][] parallelReadZarrINT8(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrINT8(fileName, start, end, axes, newBytePlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public byte[][] parallelReadZarrINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, byte[][] dest) {
+		return parallelReadZarrINT8(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public byte[][] parallelReadZarrINT8(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrINT8(fileName, startX, startY, startZ, endX, endY, endZ,
-			newBytePlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrINT8(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** Signed 16-bit zarrs, shifted to 0-65535 (ImageJ's signed-16 convention). */
-	public native short[][] parallelReadZarrINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, short[][] dest);
+	public native short[][] parallelReadZarrINT16(String fileName, long[] start, long[] end, int[] axes, short[][] dest);
+
+	public short[][] parallelReadZarrINT16(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrINT16(fileName, start, end, axes, newShortPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public short[][] parallelReadZarrINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, short[][] dest) {
+		return parallelReadZarrINT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public short[][] parallelReadZarrINT16(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrINT16(fileName, startX, startY, startZ, endX, endY, endZ,
-			newShortPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrINT16(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** 32-bit integer zarrs are converted to float: ImageStack has no int display. */
-	public native float[][] parallelReadZarrINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrINT32(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrINT32(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrINT32(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrINT32(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrINT32(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrINT32(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** 32-bit unsigned integer zarrs are converted to float. */
-	public native float[][] parallelReadZarrUINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrUINT32(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrUINT32(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrUINT32(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrUINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrUINT32(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrUINT32(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrUINT32(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrUINT32(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** 64-bit integer zarrs are converted to float (precision loss above 2^24). */
-	public native float[][] parallelReadZarrINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrINT64(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrINT64(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrINT64(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrINT64(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrINT64(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrINT64(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** 64-bit unsigned integer zarrs are converted to float (precision loss above 2^24). */
-	public native float[][] parallelReadZarrUINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest);
+	public native float[][] parallelReadZarrUINT64(String fileName, long[] start, long[] end, int[] axes, float[][] dest);
+
+	public float[][] parallelReadZarrUINT64(String fileName, long[] start, long[] end, int[] axes) {
+		return parallelReadZarrUINT64(fileName, start, end, axes, newFloatPlanes(planes(start, end, axes), planeElements(start, end, axes)));
+	}
+
+	public float[][] parallelReadZarrUINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ, float[][] dest) {
+		return parallelReadZarrUINT64(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES, dest);
+	}
 
 	public float[][] parallelReadZarrUINT64(String fileName, long startX, long startY, long startZ, long endX, long endY, long endZ) {
-		return parallelReadZarrUINT64(fileName, startX, startY, startZ, endX, endY, endZ,
-			newFloatPlanes(endZ - startZ, (endX - startX) * (endY - startY)));
+		return parallelReadZarrUINT64(fileName, new long[] { startX, startY, startZ }, new long[] { endX, endY, endZ }, MATLAB_3D_AXES);
 	}
 
 	/** Bits per pixel of the zarr on disk. */
@@ -233,6 +344,6 @@ public class ParallelReadNative {
 	/** The numpy-style dtype of the zarr on disk, e.g. "&lt;u2" or "&lt;i4". */
 	public native String getZarrDtype(String fileName);
 
-	/** Shape of the zarr on disk. */
+	/** Shape of the zarr on disk, one value per axis. */
 	public native long[] getZarrDims(String fileName);
 }

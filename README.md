@@ -9,8 +9,9 @@ The heavy lifting is done by the native
 bundled inside the plugin jar and loaded automatically.
 
 ## Limitations
-1. Chunky (interleaved) 8-bit RGB/RGBA tiffs are read in parallel; planar RGB tiffs and 16-bit RGB are not supported. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
-2. ImageJ tiff files (tiff files written by ImageJ) with multiple color channels are unofficially supported
+1. 8-bit RGB/RGBA tiffs are read in parallel, whether their colors are interleaved or stored as separate planes; 16-bit RGB is not supported. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
+2. Complex-valued zarr arrays cannot be opened. Data types ImageJ lacks are converted: float16, bfloat16, 32- and 64-bit integers and doubles open as 32-bit float images, and bool arrays as images of 0 and 1
+3. Images are saved as 3D Zarr v2 arrays: a hyperstack's channels and time points are saved one after another along z
 
 ## Quick Start Guide
 
@@ -39,6 +40,31 @@ The plugin is then in the **Plugins** menu as **Parallel Fiji Visualizer**.
 `Parallel_Fiji_Visualizer_plugin` jar from `Fiji.app/plugins` first; they are
 no longer used.
 
+### Opening Zarr
+Drag a Zarr folder onto the plugin window. A folder is a Zarr if it holds Zarr
+metadata (`.zarray`, `zarr.json` or `.zgroup`); its name does not matter. The
+plugin opens:
+- Zarr v2 and v3 arrays with 2 to 5 axes, as hyperstacks with channel and time sliders
+- OME-Zarr images (their full-resolution level, with its pixel size)
+- groups that hold a single image
+
+Axis names come from the metadata: Zarr v3 `dimension_names`, xarray's
+`_ARRAY_DIMENSIONS`, or the OME-Zarr axes. Arrays without names are read as:
+- **Zarr v2:** MATLAB's order (y, x, z, c, t), as PetaKit5D and this plugin
+  write them. Chunks of 1 on the first axes mean NumPy's order (t, c, z, y, x)
+  instead, and so does C storage order for 4D and 5D arrays.
+- **Zarr v3:** (t, z, y, x, c), or (t, c, z, y, x) when the last axis is longer than 8.
+
+Arrays with fewer axes leave out the ones they lack: a 4D Zarr v2 array is
+(y, x, z, t), and a 3D Zarr v3 volume (z, y, x).
+
+**Axes mixed up?** Set **Zarr axis order** at the bottom of the plugin window
+to the array's axes in order, using x, y, z, c (channel) and t (time), e.g.
+`tzyxc`, and open it again. An order applies to unnamed arrays with that many
+axes, so give one per number of axes, separated by commas: `yxz, tzyxc`.
+**Auto** goes back to the rules above. Macros can set it with
+`call("ij.Prefs.set", "pfv.zarrAxisOrder", "tzyxc");`.
+
 ## Building from Source
 
 Requirements:
@@ -65,8 +91,9 @@ the three native sets into one cross-platform jar.
 
 `src/test/java` holds regression tests for the JNI layer and the Java glue:
 native round trips for every data type, end-to-end reads through the plugin's
-readers, folder and hyperstack opening, the virtual stack, and checks that the
-plugin still loads in a stock Fiji. `mvn package -Pnative` builds the natives
+readers, Zarr v2, v3 and OME-Zarr layouts and their axes, folder and hyperstack
+opening, the virtual stack, and checks that the plugin still loads in a stock
+Fiji. `mvn package -Pnative` builds the natives
 and runs every test; a test that needs the natives fails if they were built but
 cannot be loaded. Without `-Pnative` those tests are skipped and the Java-only
 tests still run.

@@ -4,8 +4,11 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.File;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,11 +19,20 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.awt.Color;
+
+import ij.CompositeImage;
+import ij.IJ;
 import ij.ImagePlus;
+import ij.ImageStack;
 import ij.ParallelVirtualStack;
 import ij.io.FileSaver;
+import ij.measure.Calibration;
 import ij.process.ColorProcessor;
+import ij.process.FloatProcessor;
 import ij.process.ImageProcessor;
+import ij.process.LUT;
+import ij.process.ShortProcessor;
 
 /**
  * End-to-end regression tests for the Java glue: PRT/PRZ must turn files into
@@ -227,6 +239,179 @@ public class PluginReadTest {
 			int n = order[i];
 			assertArrayEquals("slice " + n, slices[n - 1], (short[]) stack.getProcessor(n).getPixels());
 			assertEquals("block reads after step " + i + " (slice " + n + ")", expectedReads[i], stack.getBlockReads());
+		}
+	}
+	/** cpp-tiff 1.7 reads planar RGB (one plane per color), which used to be rejected. */
+	@Test
+	public void planarRgbTiffThroughPRT() throws Exception {
+		int[] pixels = rgbPixels();
+		String path = new File(tmp.getRoot(), "planar.tif").getPath();
+		writePlanarRgbTiff(path, pixels);
+		assertRgbReads(path, pixels);
+	}
+
+	/** A minimal uncompressed TIFF with R, G and B stored as three separate planes. */
+	private static void writePlanarRgbTiff(String path, int[] argb) throws Exception {
+		final int plane = W * H, entries = 10;
+		final int bitsAt = 8 + 2 + entries * 12 + 4, offsetsAt = bitsAt + 6, countsAt = offsetsAt + 12, dataAt = countsAt + 12;
+		ByteBuffer b = ByteBuffer.allocate(dataAt + 3 * plane).order(ByteOrder.LITTLE_ENDIAN);
+		b.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(8);
+		b.putShort((short) entries);
+		tiffEntry(b, 256, 4, 1, W);          // width
+		tiffEntry(b, 257, 4, 1, H);          // height
+		tiffEntry(b, 258, 3, 3, bitsAt);     // 8 bits per sample
+		tiffEntry(b, 259, 3, 1, 1);          // no compression
+		tiffEntry(b, 262, 3, 1, 2);          // RGB
+		tiffEntry(b, 273, 4, 3, offsetsAt);  // one strip per color plane
+		tiffEntry(b, 277, 3, 1, 3);          // 3 samples per pixel
+		tiffEntry(b, 278, 4, 1, H);          // rows per strip
+		tiffEntry(b, 279, 4, 3, countsAt);
+		tiffEntry(b, 284, 3, 1, 2);          // planar
+		b.putInt(0);                         // no next directory
+		b.putShort((short) 8).putShort((short) 8).putShort((short) 8);
+		for (int c = 0; c < 3; c++) b.putInt(dataAt + c * plane);
+		for (int c = 0; c < 3; c++) b.putInt(plane);
+		for (int c = 0; c < 3; c++)
+			for (int i = 0; i < plane; i++)
+				b.put((byte) (argb[i] >> (16 - 8 * c)));
+		Files.write(Paths.get(path), b.array());
+	}
+
+	private static void tiffEntry(ByteBuffer b, int tag, int type, int count, int value) {
+		b.putShort((short) tag).putShort((short) type).putInt(count);
+		if (type == 3 && count == 1) b.putShort((short) value).putShort((short) 0);
+		else b.putInt(value);
+	}
+
+	private static void flipZarrDtype(String path, String from, String to) throws Exception {
+		Path za = Paths.get(path, ".zarray");
+		String json = new String(Files.readAllBytes(za), StandardCharsets.UTF_8);
+		Files.write(za, json.replace(from, to).getBytes(StandardCharsets.UTF_8));
+	}
+
+	/** float16 zarrs open as 32-bit float images with their exact values. */
+	@Test
+	public void float16ZarrOpensAs32BitThroughPRZ() throws Exception {
+		short[] half = { 0x3E00, (short) 0xB800, 0x6400 }; // 1.5, -0.5, 1024
+		float[] value = { 1.5f, -0.5f, 1024f };
+		short[][] slices = new short[Z][W * H];
+		for (int s = 0; s < Z; s++)
+			for (int i = 0; i < W * H; i++)
+				slices[s][i] = half[(i + s) % half.length];
+		String path = new File(tmp.getRoot(), "f16.zarr").getPath();
+		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 16);
+		flipZarrDtype(path, "<u2", "<f2");
+
+		ImagePlus imp = new PRZ(path, false).getImp();
+		assertNotNull("PRZ produced no image", imp);
+		assertEquals(ImagePlus.GRAY32, imp.getType());
+		for (int s = 0; s < Z; s++) {
+			float[] px = (float[]) imp.getStack().getPixels(s + 1);
+			for (int i = 0; i < 6; i++)
+				assertEquals("slice " + s + " index " + i, value[(i + s) % value.length], px[i], 0f);
+		}
+	}
+
+	/** ImageJ has no complex type: refuse with a message rather than show garbage. */
+	@Test
+	public void complexZarrIsRefusedWithAClearMessage() throws Exception {
+		String path = new File(tmp.getRoot(), "c8.zarr").getPath();
+		writer.parallelWriteZarr(path, new float[Z][W * H], 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 32);
+		flipZarrDtype(path, "<f4", "<c8");
+		try {
+			new PRZ(path, false);
+			fail("a complex zarr was opened");
+		}
+		catch (IllegalArgumentException e) {
+			assertTrue(e.getMessage(), e.getMessage().contains("complex"));
+		}
+	}
+
+	/** bool zarrs open as 8-bit images of 0 and 1. */
+	@Test
+	public void boolZarrOpensAsZeroAndOneThroughPRZ() throws Exception {
+		byte[][] slices = new byte[Z][W * H];
+		for (int s = 0; s < Z; s++)
+			for (int i = 0; i < W * H; i++)
+				slices[s][i] = (byte) ((i + s) % 3 == 0 ? 1 : 0);
+		String path = new File(tmp.getRoot(), "bool.zarr").getPath();
+		writer.parallelWriteZarr(path, slices, 0, 0, 0, H, W, Z, CHUNK, CHUNK, CHUNK, 1, "zstd", 1, 8);
+		flipZarrDtype(path, "|u1", "|b1");
+
+		ImagePlus imp = new PRZ(path, false).getImp();
+		assertNotNull("PRZ produced no image", imp);
+		assertEquals(ImagePlus.GRAY8, imp.getType());
+		for (int s = 0; s < Z; s++)
+			assertArrayEquals("slice " + s, slices[s], (byte[]) imp.getStack().getPixels(s + 1));
+	}
+
+	/**
+	 * ImageJ's multichannel hyperstack TIFFs open exactly as ImageJ opens them:
+	 * channels, slices and frames, every pixel, the composite mode, each
+	 * channel's LUT and display range, and the calibration. (Each bit depth is
+	 * saved in another display mode.)
+	 */
+	@Test
+	public void imageJHyperstackTiffOpensAsImageJOpensIt() throws Exception {
+		int[] modes = { IJ.COMPOSITE, IJ.COLOR, IJ.GRAYSCALE };
+		for (int bits : new int[] { 8, 16, 32 }) {
+			final int c = 3, z = 2, t = 2;
+			ImageStack stack = new ImageStack(W, H);
+			for (int n = 0; n < c * z * t; n++) {
+				ImageProcessor ip = bits == 32 ? new FloatProcessor(W, H) : bits == 16 ? new ShortProcessor(W, H)
+					: new ij.process.ByteProcessor(W, H);
+				for (int i = 0; i < W * H; i++) ip.setf(i, (i * 7 + n * 13) % 250);
+				stack.addSlice("plane " + n, ip);
+			}
+			ImagePlus src = new ImagePlus("hyper", stack);
+			src.setDimensions(c, z, t);
+			CompositeImage comp = new CompositeImage(src, modes[bits / 16]);
+			Color[] colors = { Color.magenta, Color.cyan, Color.yellow };
+			for (int ch = 0; ch < c; ch++) {
+				LUT lut = LUT.createLutFromColor(colors[ch]);
+				lut.min = 10 * (ch + 1);
+				lut.max = 100 + 50 * ch;
+				comp.setChannelLut(lut, ch + 1);
+			}
+			Calibration cal = comp.getCalibration();
+			cal.pixelWidth = 0.104;
+			cal.pixelHeight = 0.104;
+			cal.pixelDepth = 0.25;
+			cal.frameInterval = 3.5;
+			cal.setUnit("micron");
+			String path = new File(tmp.getRoot(), "hyper" + bits + ".tif").getPath();
+			assertTrue(new FileSaver(comp).saveAsTiff(path));
+
+			ImagePlus ij = IJ.openImage(path), ours = new PRT(path, false).getImp();
+			assertNotNull(bits + "-bit: PRT produced no image", ours);
+			String what = bits + "-bit: ";
+			assertEquals(what + "channels", c, ours.getNChannels());
+			assertEquals(what + "slices", z, ours.getNSlices());
+			assertEquals(what + "frames", t, ours.getNFrames());
+			assertEquals(what + "bit depth", ij.getBitDepth(), ours.getBitDepth());
+			assertTrue(what + "not a composite", ours.isComposite());
+			assertEquals(what + "mode", ((CompositeImage) ij).getMode(), ((CompositeImage) ours).getMode());
+			for (int ch = 1; ch <= c; ch++) {
+				LUT a = ((CompositeImage) ij).getChannelLut(ch), b = ((CompositeImage) ours).getChannelLut(ch);
+				assertEquals(what + "channel " + ch + " color", a.getRGB(255), b.getRGB(255));
+				assertEquals(what + "channel " + ch + " display min", a.min, b.min, 0);
+				assertEquals(what + "channel " + ch + " display max", a.max, b.max, 0);
+			}
+			// (TIFF stores the pixel size as a fraction: 0.104 reads back as 0.1040000067)
+			Calibration theirs = ij.getCalibration(), mine = ours.getCalibration();
+			assertEquals(what + "pixel width", 0.104, mine.pixelWidth, 1e-6);
+			assertEquals(what + "pixel width", theirs.pixelWidth, mine.pixelWidth, 0);
+			assertEquals(what + "pixel height", theirs.pixelHeight, mine.pixelHeight, 0);
+			assertEquals(what + "pixel depth", 0.25, mine.pixelDepth, 0);
+			assertEquals(what + "frame interval", 3.5, mine.frameInterval, 0);
+			assertEquals(what + "unit", "micron", mine.getUnit());
+			for (int n = 1; n <= c * z * t; n++) {
+				assertEquals(what + "label " + n, ij.getStack().getSliceLabel(n), ours.getStack().getSliceLabel(n));
+				Object a = ij.getStack().getPixels(n), b = ours.getStack().getPixels(n);
+				if (bits == 8) assertArrayEquals(what + "plane " + n, (byte[]) a, (byte[]) b);
+				else if (bits == 16) assertArrayEquals(what + "plane " + n, (short[]) a, (short[]) b);
+				else assertArrayEquals(what + "plane " + n, (float[]) a, (float[]) b, 0f);
+			}
 		}
 	}
 }

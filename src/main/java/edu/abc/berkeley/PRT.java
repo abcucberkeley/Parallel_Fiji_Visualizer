@@ -2,6 +2,7 @@ package edu.abc.berkeley;
 
 import java.awt.image.ColorModel;
 import java.io.File;
+import java.util.Locale;
 import java.util.Properties;
 import ij.CompositeImage;
 import ij.IJ;
@@ -22,6 +23,12 @@ public class PRT {
 	
 	//private static final Object lock = new Object();
 	
+	/** Whether a file name has a TIFF extension: .tif or .tiff, in any case. */
+	public static boolean isTiff(String name) {
+		String n = name.toLowerCase(Locale.ROOT);
+		return n.endsWith(".tif") || n.endsWith(".tiff");
+	}
+
 	public PRT(String fileName, boolean showImage){
 		//synchronized(lock) {
 		//IJ.showProgress(0);
