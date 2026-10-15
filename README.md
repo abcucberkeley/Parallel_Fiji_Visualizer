@@ -70,6 +70,13 @@ Threads**) open as virtual stacks, read a block of planes at a time as you
 scroll. 8-bit color TIFFs open as RGB images, and 16-bit or float color as one
 channel per color, as ImageJ shows them.
 
+### Saving
+**Save as Tiff** and **Save as Zarr** save in the background, so Fiji stays
+usable while they run. The image is locked until it has been saved, as ImageJ
+locks the images its commands are working on: its sliders are greyed out and
+other commands leave it alone. Saving a virtual stack reads all of its planes,
+so it has to fit in Fiji's memory.
+
 ### Saving as Zarr
 **Save as Zarr** writes a Zarr v2 array in MATLAB's axis order, as PetaKit5D
 does: (y, x, z), or (y, x, z, c, t) for a hyperstack, with the axis names

@@ -72,7 +72,8 @@ public class DragDropFrame extends JFrame{
 	                String fileName = od.getFileName();
 	            	if(fileName != null) {
 	            		String fullPath = directory + fileName;
-	            		new IFTL(fullPath);
+	            		// Read in the background: on this, Swing's thread, Fiji would freeze until all were open
+	            		Background.run("PFV import", () -> new IFTL(fullPath));
 	            	}
 	            }
 	        });

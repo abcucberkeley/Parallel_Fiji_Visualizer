@@ -10,10 +10,24 @@ import javax.swing.JFileChooser;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
+import ij.WindowManager;
 
 public class PWZ {
 
+	/**
+	 * Save as Zarr: asks where to save the current image, on Swing's event
+	 * thread (the button's), then saves it on a thread of its own.
+	 */
 	PWZ(){
+		ImagePlus cImagePlus = WindowManager.getCurrentImage();
+		if(cImagePlus == null) {
+			IJ.noImage();
+			return;
+		}
+		if(cImagePlus.getType() == ImagePlus.COLOR_RGB) {
+			IJ.log("RGB images cannot be saved as zarr\n");
+			return;
+		}
 		JFileChooser chooser = new JFileChooser();
 		chooser.setApproveButtonText("Save");
 		chooser.setDialogTitle("Save as Zarr");
@@ -23,14 +37,12 @@ public class PWZ {
 			f = chooser.getSelectedFile() ;
 		}
 		if(f == null) return;
-		ImagePlus cImagePlus = IJ.getImage();
-		//WindowManager.getCurrentImage();
-		if(cImagePlus == null) return;
-		if(cImagePlus.getType() == ImagePlus.COLOR_RGB) {
-			IJ.log("RGB images cannot be saved as zarr\n");
-			return;
-		}
-		write(cImagePlus, f);
+		save(cImagePlus, f);
+	}
+
+	/** Saves imp as the Zarr dir on a thread of its own, the image locked meanwhile (see Background.save). */
+	static Thread save(ImagePlus imp, File dir) {
+		return Background.save(imp, dir.getName(), () -> write(imp, dir));
 	}
 
 	/**

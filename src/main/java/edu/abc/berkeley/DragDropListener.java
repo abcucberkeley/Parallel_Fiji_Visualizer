@@ -28,23 +28,9 @@ class DragDropListener implements DropTargetListener {
         return Files.isReadable(path);
 	}
 
-	/**
-	 * Run a reader on its own thread and surface anything it throws as a
-	 * dialog: these threads have no other exception handler, so without this
-	 * a failure (e.g. natives that cannot load) dies silently in the console.
-	 */
+	/** Run a reader on its own thread, anything it throws shown in a dialog. */
 	private static void openInBackground(Runnable open) {
-		new Thread(() -> {
-			try {
-				open.run();
-			}
-			catch (Throwable t) {
-				ProgressEstimator.clearStarting();
-				t.printStackTrace();
-				String msg = t.getMessage() != null ? t.getMessage() : t.toString();
-				IJ.error("Parallel Fiji Visualizer", msg);
-			}
-		}).start();
+		Background.run("PFV open", open);
 	}
 
     @Override

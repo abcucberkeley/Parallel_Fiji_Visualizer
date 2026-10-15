@@ -376,11 +376,60 @@ void fillPlanes(D* const* dst, uint64_t first, uint64_t count, const S* src, con
 	}
 }
 
+// Whether slices holds nSlices primitive arrays of sliceElems elements of
+// elemBytes bytes each, which the copy below reads without looking; if not,
+// a RuntimeException saying what is wrong is pending. (A virtual stack has no
+// array of planes: handed one as null, the JVM would crash.)
+inline bool checkSlices(JNIEnv* env, jobjectArray slices, uint64_t sliceElems,
+                        uint64_t nSlices, uint64_t elemBytes) {
+	if (slices == nullptr) {
+		throwRuntime(env, "There are no planes to write (the image has none in memory)");
+		return false;
+	}
+	const uint64_t given = (uint64_t)env->GetArrayLength(slices);
+	if (given < nSlices) {
+		throwRuntime(env, ("Expected " + std::to_string(nSlices) + " planes to write, got " + std::to_string(given)).c_str());
+		return false;
+	}
+	// The primitive arrays whose elements have elemBytes bytes
+	const char* names[2] = { nullptr, nullptr };
+	if (elemBytes == 1) names[0] = "[B";
+	else if (elemBytes == 2) { names[0] = "[S"; names[1] = "[C"; }
+	else if (elemBytes == 4) { names[0] = "[F"; names[1] = "[I"; }
+	else if (elemBytes == 8) { names[0] = "[D"; names[1] = "[J"; }
+	jclass types[2] = { nullptr, nullptr };
+	for (int k = 0; k < 2; k++)
+		if (names[k] != nullptr && (types[k] = env->FindClass(names[k])) == nullptr) return false;
+	bool ok = true;
+	for (uint64_t i = 0; i < nSlices && ok; i++) {
+		jobject slice = env->GetObjectArrayElement(slices, (jsize)i);
+		if (slice == nullptr) {
+			throwRuntime(env, ("Plane " + std::to_string(i + 1) + " to write is missing").c_str());
+			ok = false;
+			break;
+		}
+		const bool typed = (types[0] != nullptr && env->IsInstanceOf(slice, types[0])) ||
+		                   (types[1] != nullptr && env->IsInstanceOf(slice, types[1]));
+		if (!typed || (uint64_t)env->GetArrayLength((jarray)slice) != sliceElems) {
+			throwRuntime(env, ("Plane " + std::to_string(i + 1) + " to write is not " + std::to_string(sliceElems) +
+				" values of " + std::to_string(8 * elemBytes) + " bits").c_str());
+			ok = false;
+		}
+		env->DeleteLocalRef(slice);
+	}
+	for (jclass t : types)
+		if (t != nullptr) env->DeleteLocalRef(t);
+	return ok;
+}
+
 // Copy a Java T[nSlices][sliceElems] into one contiguous native buffer
 // (malloc'd; the caller frees). elemBytes is the element size (1, 2 or 4);
 // the copy itself is type-agnostic. Batched and pinned like slicesToJava.
+// Planes that are missing or of another size or type are refused (see
+// checkSlices): null is returned with a RuntimeException pending.
 inline void* slicesToNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElems,
                             uint64_t nSlices, uint64_t elemBytes) {
+	if (!checkSlices(env, slices, sliceElems, nSlices, elemBytes)) return nullptr;
 	const uint64_t sliceBytes = sliceElems * elemBytes;
 	void* buf = malloc(sliceBytes * nSlices);
 	if (buf == nullptr) return nullptr;
