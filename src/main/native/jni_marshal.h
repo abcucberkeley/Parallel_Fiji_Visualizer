@@ -51,15 +51,15 @@ inline void throwRuntime(JNIEnv* env, const char* msg) {
 }
 
 // Called from JNI_OnLoad of each JNI library. cpp-tiff and cpp-zarr each link
-// a private copy of the C++ runtime and GCC's unwinder (-static-libstdc++
-// -static-libgcc); our libraries take their C++ runtime from libcppTiff's
-// exported copy. A cpp-zarr exception is therefore unwound by cpp-zarr's
-// unwinder but handled in our frames by cpp-tiff's personality routine, whose
-// unwinder helpers (GCC < 14) fill their register-size table only the first
-// time their own unwinder runs; until then they abort the process. Throwing
-// and catching once here fills that table, so catching cpp-zarr's exceptions
-// works. (GCC supports exceptions across shared libraries only with a shared
-// libgcc; all libraries here come from one compiler, so the layouts match.)
+// a private copy of the C++ runtime (-static-libstdc++), and on macOS and
+// Windows of GCC's unwinder too (-static-libgcc); our libraries take their C++
+// runtime from libcppTiff's exported copy. A cpp-zarr exception could
+// therefore be unwound by cpp-zarr's unwinder but handled in our frames by
+// cpp-tiff's personality routine, whose unwinder helpers (GCC < 14) fill their
+// register-size table only the first time their own unwinder runs; until then
+// they abort the process. Throwing and catching once here fills that table.
+// Since cpp-tiff and cpp-zarr v1.7.3, every library here unwinds with the
+// system's shared libgcc_s on Linux, where this is no longer needed.
 inline void primeUnwinder() {
 	try {
 		throw 0;

@@ -103,21 +103,12 @@
 	<dependencies>
 		<dependency>
 			<groupId>net.imagej</groupId>
-			<artifactId>imagej</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>net.imagej</groupId>
 			<artifactId>ij</artifactId>
 		</dependency>
 		<!-- Extracts and loads the natives bundled under natives/<platform>/ -->
 		<dependency>
 			<groupId>org.scijava</groupId>
 			<artifactId>native-lib-loader</artifactId>
-		</dependency>
-		<!-- Used directly (SystemUtils/StringUtils in DragDropListener) -->
-		<dependency>
-			<groupId>commons-lang</groupId>
-			<artifactId>commons-lang</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>junit</groupId>
