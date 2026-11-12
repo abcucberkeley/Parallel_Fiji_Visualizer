@@ -310,11 +310,20 @@ jobjectArray slicesToJava(JNIEnv* env, const T* data, uint64_t sliceElems, uint6
 }
 
 // Where planes lie in a native buffer: pixel (x, y) of plane p is element
-// base[p] + x*sx + y*sy (x across a row of w pixels, y down h rows)
+// base[p] + x*sx + y*sy (x across a row of w pixels, y down h rows). They fill
+// the rectangle of w x h pixels at (x0, y0) of planes whose rows are rowLength
+// pixels long, or whole planes of w x h pixels when rowLength is 0 (as when
+// the last three are left out): a Zarr read in bricks fills a part of each
+// plane at a time.
 struct PlaneLayout {
 	uint64_t w, h, sx, sy;
 	const uint64_t* base;
-	bool contiguous() const { return (w == 1 || sx == 1) && (h == 1 || sy == w); }
+	uint64_t x0, y0, rowLength;
+	uint64_t row() const { return rowLength != 0 ? rowLength : w; }
+	// Where the rectangle starts in its planes
+	uint64_t offset() const { return y0 * row() + x0; }
+	// Whether the rectangle is one block in the buffer and in its planes
+	bool contiguous() const { return (w == 1 || sx == 1) && (h == 1 || (sy == w && row() == w)); }
 };
 
 // Conversions of each element on its way into Java's arrays
@@ -343,19 +352,24 @@ template <typename T> struct PlainCopy<Cast<T, T>, T, T> { static const bool val
 
 // Fill dst[0..count) with planes [first, first + count) of src laid out as L,
 // converting every element with conv: straight into Java's (pinned) arrays,
-// with no intermediate copy of the image. Contiguous planes go in blocks; the
-// others in 64x64 tiles, which keep the reads of transposed planes (MATLAB's
-// (y, x) layout, sx = h) in cache. Fills of up to 1 MB stay on one thread
-// (see copyPlanes).
+// with no intermediate copy of the image. Contiguous planes go in blocks;
+// rectangles whose rows are contiguous in src row by row; the others in 64x64
+// tiles, which keep the reads of transposed planes (MATLAB's (y, x) layout,
+// sx = h) in cache. Fills of up to 1 MB stay on one thread (see copyPlanes).
 template <typename S, typename D, typename Conv>
 void fillPlanes(D* const* dst, uint64_t first, uint64_t count, const S* src, const PlaneLayout& L, Conv conv) {
-	const uint64_t n = L.w * L.h;
+	const uint64_t n = L.w * L.h, row = L.row(), at = L.offset();
 	const bool parallel = count * n * sizeof(D) > (1u << 20);
-	if (L.contiguous() && PlainCopy<Conv, S, D>::value) {
+	const bool plain = PlainCopy<Conv, S, D>::value;
+	if (L.contiguous() && plain) {
 		// memcpy outruns an element loop (by up to 5% on some CPUs)
 		std::vector<const void*> from(count);
-		for (uint64_t p = 0; p < count; p++) from[p] = src + L.base[first + p];
-		copyPlanes((void* const*)dst, from.data(), (int64_t)count, n * sizeof(D));
+		std::vector<void*> to(count);
+		for (uint64_t p = 0; p < count; p++) {
+			from[p] = src + L.base[first + p];
+			to[p] = dst[p] + at;
+		}
+		copyPlanes(to.data(), from.data(), (int64_t)count, n * sizeof(D));
 		return;
 	}
 	if (L.contiguous()) {
@@ -365,24 +379,39 @@ void fillPlanes(D* const* dst, uint64_t first, uint64_t count, const S* src, con
 		for (int64_t k = 0; k < total; k++) {
 			const uint64_t p = (uint64_t)k / per, i0 = ((uint64_t)k % per) * block, i1 = i0 + block < n ? i0 + block : n;
 			const S* s = src + L.base[first + p];
-			D* d = dst[p];
+			D* d = dst[p] + at;
 			for (uint64_t i = i0; i < i1; i++) d[i] = conv(s[i]);
 		}
 		return;
 	}
 	const uint64_t B = 64, rowTiles = (L.h + B - 1) / B;
 	const int64_t total = (int64_t)(count * rowTiles);
+	if (L.w == 1 || L.sx == 1) {
+		#pragma omp parallel for schedule(static) if(parallel)
+		for (int64_t k = 0; k < total; k++) {
+			const uint64_t p = (uint64_t)k / rowTiles, y0 = ((uint64_t)k % rowTiles) * B, y1 = y0 + B < L.h ? y0 + B : L.h;
+			const S* s = src + L.base[first + p];
+			D* d = dst[p] + at;
+			for (uint64_t y = y0; y < y1; y++) {
+				D* r = d + y * row;
+				const S* sr = s + y * L.sy;
+				if (plain) memcpy(r, sr, (size_t)(L.w * sizeof(D)));
+				else for (uint64_t x = 0; x < L.w; x++) r[x] = conv(sr[x]);
+			}
+		}
+		return;
+	}
 	#pragma omp parallel for schedule(static) if(parallel)
 	for (int64_t k = 0; k < total; k++) {
 		const uint64_t p = (uint64_t)k / rowTiles, y0 = ((uint64_t)k % rowTiles) * B, y1 = y0 + B < L.h ? y0 + B : L.h;
 		const S* s = src + L.base[first + p];
-		D* d = dst[p];
+		D* d = dst[p] + at;
 		for (uint64_t x0 = 0; x0 < L.w; x0 += B) {
 			const uint64_t x1 = x0 + B < L.w ? x0 + B : L.w;
 			for (uint64_t y = y0; y < y1; y++) {
-				D* row = d + y * L.w;
+				D* r = d + y * row;
 				const S* sr = s + y * L.sy;
-				for (uint64_t x = x0; x < x1; x++) row[x] = conv(sr[x * L.sx]);
+				for (uint64_t x = x0; x < x1; x++) r[x] = conv(sr[x * L.sx]);
 			}
 		}
 	}

@@ -54,7 +54,7 @@ double now() {
 
 // A read's window [start, end), which of the array's axes are x, y, z, c and t
 // (and the image's size along them), the memory order cpp-zarr writes the
-// window in, and the pieces it is read in: along each of z, c and t the
+// window in, and the pieces it is read in: along each image axis i the
 // window-relative ranges [cuts[i][k], cuts[i][k + 1]), every combination of
 // one range per axis read by one cpp-zarr call. byIndex marks the axes read
 // one index at a time because their indices interleave the planes.
@@ -73,7 +73,7 @@ struct Window {
 		return most;
 	}
 	uint64_t pieces(int i) const { return cuts[i].size() - 1; }
-	uint64_t reads() const { return pieces(Z) * pieces(C) * pieces(T); }
+	uint64_t reads() const { return pieces(X) * pieces(Y) * pieces(Z) * pieces(C) * pieces(T); }
 	// z, c and t from the slowest to the fastest in the read's memory order
 	// (axes the image does not have last)
 	std::vector<int> nesting() const {
@@ -86,18 +86,28 @@ struct Window {
 		});
 		return order;
 	}
+	// The axes as the reads are nested, the slowest first: z, c and t as
+	// nesting() has them, then the plane's own axes, the slower of y and x in
+	// the read's memory order first
+	std::vector<int> order() const {
+		std::vector<int> all = nesting();
+		const bool yFirst = cOrder ? axes[Y] < axes[X] : axes[Y] > axes[X];
+		all.push_back(yFirst ? Y : X);
+		all.push_back(yFirst ? X : Y);
+		return all;
+	}
 };
 
 // Slabs hold at least this much: per-read costs stay small next to the read.
 // (Tests set it lower to read small arrays in slabs.)
 uint64_t minSlabBytes = (uint64_t)1 << 30;
 
-// How a read is cut along z, c and t, from the slowest axis: "t in 2, z in 4,
-// c by index", or "" when it is read at once
+// How a read is cut, from the slowest axis: "t in 2, z in 4, c by index", or
+// "" when it is read at once
 std::string cutsOf(const Window& w) {
 	static const char* const names[5] = { "x", "y", "z", "c", "t" };
 	std::string s;
-	for (int i : w.nesting()) {
+	for (int i : w.order()) {
 		if (w.pieces(i) < 2) continue;
 		s += std::string(s.empty() ? "" : ", ") + names[i] + (w.byIndex[i] ? " by index" : " in " + std::to_string(w.pieces(i)));
 	}
@@ -158,7 +168,7 @@ std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vect
 		if (d > lo) last = false;
 	}
 	w.cOrder = last && !first ? true : first && !last ? false : Zarr.get_order() == "C";
-	for (int i = Z; i <= T; i++) w.cuts[i] = { 0, w.size[i] };
+	for (int i = 0; i < 5; i++) w.cuts[i] = { 0, w.size[i] };
 
 	uint64_t bytes = w.size[X] * w.size[Y] * w.planes() * elemBytes;
 
@@ -236,12 +246,11 @@ std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vect
 	// cut along the next axis too, so that the buffer stays near minSlabBytes
 	// even when one step of the slowest axis is far bigger (one time point of
 	// one channel of a (t, z, y, x, c) array of 17 GB holds 4.3 GB).
-	for (int i : w.nesting()) {
-		if (bytes < 2 * minSlabBytes) break;
-		if (axes[i] < 0 || w.size[i] < 2 || w.byIndex[i]) continue;
+	// cut(i, least) cuts axis i into such pieces of at least least bytes.
+	auto cut = [&](int i, uint64_t least) {
 		const uint64_t a = (uint64_t)axes[i], chunk = chunkExtent(axes[i]);
 		const uint64_t perUnit = bytes / w.size[i];
-		const uint64_t rows = (minSlabBytes + perUnit * chunk - 1) / (perUnit * chunk);
+		const uint64_t rows = (least + perUnit * chunk - 1) / (perUnit * chunk);
 		const uint64_t step = chunk * (rows > 0 ? rows : 1);
 		w.cuts[i].assign(1, 0);
 		for (uint64_t p = start[a]; p < end[a];) {
@@ -250,7 +259,34 @@ std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vect
 			p = next;
 		}
 		bytes = perUnit * w.thickest(i);
+	};
+	for (int i : w.nesting()) {
+		if (bytes < 2 * minSlabBytes) break;
+		if (axes[i] < 0 || w.size[i] < 2 || w.byIndex[i]) continue;
+		cut(i, minSlabBytes);
 	}
+	// Planes far bigger than slabs are cut into bricks as well, along y and x
+	// at chunk boundaries, the slower of the two in the read's memory order
+	// first, once one chunk row of whole planes along the axes above holds
+	// brickFrom slabs (17 GB of the 67 MB planes of a (y, x, z) array of 256^3
+	// chunks; 300 GB of 11985 x 48696 planes): each brick fills its rectangle
+	// of the planes, and holds at least a slab. (Bricks of 1 and 2 GiB read
+	// the 67 GB array above in 4.5-5.2 s on 48 cores, of 4 GiB in 5.1-5.7 s,
+	// slabs of 17 GB in 6.0-6.5 s: cpp-zarr decodes big chunks in pieces
+	// among its threads, so a brick of fewer chunks than threads still keeps
+	// them busy.) A plane axis the window spans in fewer than 4 chunks is left
+	// whole: its pieces would only add reads, and a piece one chunk deep holds
+	// at most 3 chunks along it.
+	const uint64_t brickFrom = 4;
+	const std::vector<int> nest = w.order();
+	if (bytes >= brickFrom * minSlabBytes)
+		for (size_t k = nest.size() - 2; k < nest.size(); k++) {
+			const int i = nest[k];
+			if (bytes < 2 * minSlabBytes) break;
+			const uint64_t a = (uint64_t)axes[i], chunk = chunkExtent(axes[i]);
+			if (end[a] <= start[a] || (end[a] + chunk - 1) / chunk - start[a] / chunk < 4) continue;
+			cut(i, minSlabBytes);
+		}
 	return "";
 }
 
@@ -259,17 +295,17 @@ struct Times {
 	double lists = 0, reads = 0, fills = 0;
 };
 
-// Reads the piece [lo[i], hi[i]) of the window along z, c and t (the whole
-// window along x and y) into buf, missing chunks as the fill value, and fills
-// its planes into Java's, each element converted by conv. Returns why the
-// read failed, or "" (also when a Java exception is pending).
+// Reads the piece [lo[i], hi[i]) of the window along each image axis i into
+// buf, missing chunks as the fill value, and fills its rectangle of its planes
+// into Java's, each element converted by conv. Returns why the read failed, or
+// "" (also when a Java exception is pending).
 template <typename S, typename D, typename Conv>
 std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, const uint64_t* lo, const uint64_t* hi, void* buf,
                      const uint8_t* fillElem, jobjectArray dest, Conv conv, Times& times)
 {
 	const size_t n = w.start.size();
 	std::vector<uint64_t> start = w.start, end = w.end, shape(n);
-	for (int i = Z; i <= T; i++) {
+	for (int i = 0; i < 5; i++) {
 		if (w.axes[i] < 0) continue;
 		start[w.axes[i]] = w.start[w.axes[i]] + lo[i];
 		end[w.axes[i]] = w.start[w.axes[i]] + hi[i];
@@ -301,11 +337,15 @@ std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, const uint64_t* l
 				idx.push_back(c + w.size[C] * (z + w.size[Z] * t));
 				base.push_back((z - lo[Z]) * step[Z] + (c - lo[C]) * step[C] + (t - lo[T]) * step[T]);
 			}
-	const pfv::PlaneLayout layout = { w.size[X], w.size[Y], step[X], step[Y], base.data() };
+	const uint64_t width = hi[X] - lo[X], height = hi[Y] - lo[Y];
+	const pfv::PlaneLayout layout = { width, height, step[X], step[Y], base.data(), lo[X], lo[Y], w.size[X] };
 	const S* src = (const S*)buf;
+	// About 256 MB of the rectangles a batch of pinned planes
+	const uint64_t perBatch = pfv::planesPerBatch(width * height * sizeof(D));
 	const double t3 = now();
 	pfv::fillJavaPlanes<D>(env, dest, w.size[X] * w.size[Y], idx.data(), idx.size(),
-		[&](D* const* dst, uint64_t k0, uint64_t count) { pfv::fillPlanes<S, D>(dst, k0, count, src, layout, conv); });
+		[&](D* const* dst, uint64_t k0, uint64_t count) { pfv::fillPlanes<S, D>(dst, k0, count, src, layout, conv); },
+		[perBatch](uint64_t) { return perBatch; });
 	times.fills += now() - t3;
 	return "";
 }
@@ -351,10 +391,10 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 			cuts = cutsOf(w);
 			uint8_t fillElem[16];
 			fillValueElement(Zarr.get_fill_value(), Zarr.get_dtype(), fillElem);
-			buf = malloc(w.size[X] * w.size[Y] * w.thickest(Z) * w.thickest(C) * w.thickest(T) * sizeof(S));
+			buf = malloc(w.thickest(X) * w.thickest(Y) * w.thickest(Z) * w.thickest(C) * w.thickest(T) * sizeof(S));
 			if (buf == nullptr) problem = "Out of native memory reading the Zarr";
 			// Every combination of one piece per axis, the slowest axis outermost
-			const std::vector<int> nest = w.nesting();
+			const std::vector<int> nest = w.order();
 			for (uint64_t r = 0; r < reads && problem.empty() && !env->ExceptionCheck(); r++) {
 				uint64_t lo[5] = { 0, 0, 0, 0, 0 }, hi[5] = { 0, 0, 0, 0, 0 }, rest = r;
 				for (size_t k = nest.size(); k-- > 0;) {
