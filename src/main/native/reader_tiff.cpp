@@ -38,6 +38,11 @@
 #include "parallelreadtiff.h"
 #include "helperfunctions.h" // cpp-tiff's
 
+#ifdef __linux__
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include "jni_marshal.h"
 #include "raw_file.h"
 #include "edu_abc_berkeley_ParallelReadNative.h"
@@ -51,9 +56,16 @@ enum { I_WIDTH, I_HEIGHT, I_SLICES, I_DIRECTORIES, I_BITS, I_SAMPLES, I_SAMPLE_F
 const char* const readFailed = "Parallel TIFF read failed (is the file damaged?)";
 
 // The most bytes of slices a read of an ImageJ stack converts through one
-// native buffer, at least one slice (setTiffSlabBytes makes it small for tests)
-const uint64_t defaultSlabBytes = (uint64_t)1 << 30;
-uint64_t slabBytes = defaultSlabBytes;
+// native buffer, at least one slice
+const uint64_t imageJSlabBytes = (uint64_t)1 << 30;
+// cpp-tiff reads in slabs of at least this many bytes, in at most
+// maxTiffSlabs of them, and in at most one per sliceBytesPerSlab of a slice
+// (but 2 if that makes fewer; see tiffSlabSlices)
+const uint64_t leastTiffSlabBytes = (uint64_t)4 << 30;
+const uint64_t maxTiffSlabs = 8;
+const uint64_t sliceBytesPerSlab = (uint64_t)1 << 20;
+// For tests (setTiffSlabBytes): both of the slab sizes above, when not 0
+uint64_t slabOverride = 0;
 
 bool timing() {
 	static const bool on = getenv("PFV_TIMING") != nullptr;
@@ -94,6 +106,31 @@ uint64_t threadsFor(const TiffInfo& info, jlong zStart, jlong zEnd) {
 	const uint64_t slices = zEnd > zStart ? (uint64_t)(zEnd - zStart) : 1;
 	const uint64_t bytes = slices * info.x * info.y * info.samples * (info.bits / 8);
 	return (bytes + (1u << 20) - 1) >> 20;
+}
+
+// Frees buf (from malloc, bytes long). The kernel hands back a big buffer's
+// pages on the thread that frees it, at 20-40 GB/s (0.2-0.4 s for 8.4 GB,
+// 2.3-3.5 s for 67 GB); on Linux every thread first hands back a part of them
+// (MADV_DONTNEED, which threads do side by side), and free then only unmaps
+// the addresses: 0.05-0.07 s for 8.4 GB, 0.5-0.6 s for 67 GB on 48 cores.
+// Elsewhere free does it all.
+void release(void* buf, uint64_t bytes) {
+#ifdef __linux__
+	const uint64_t piece = (uint64_t)64 << 20;
+	const long page = sysconf(_SC_PAGESIZE);
+	if (buf != nullptr && bytes >= 2 * piece && page > 0) {
+		const uint64_t a = ((uint64_t)(uintptr_t)buf + page - 1) / page * page, e = ((uint64_t)(uintptr_t)buf + bytes) / page * page;
+		const int64_t pieces = (int64_t)((e - a + piece - 1) / piece);
+		#pragma omp parallel for schedule(static)
+		for (int64_t k = 0; k < pieces; k++) {
+			const uint64_t p = a + (uint64_t)k * piece;
+			madvise((void*)(uintptr_t)p, (size_t)(p + piece < e ? piece : e - p), MADV_DONTNEED);
+		}
+	}
+#else
+	(void)bytes;
+#endif
+	free(buf);
 }
 
 // A read: the file, its description, and its slices [zStart, zStart + slices)
@@ -383,14 +420,14 @@ jobjectArray readIntoPlanes(JNIEnv* env, const Request& r, const ImageJStack& s,
 }
 
 // Slices of r's ImageJ stack read a slab at a time through one reused buffer
-// of whole slices (at most slabBytes, at least one slice); after each slab,
-// deliver(buf, s0, s1) moves the read's slices [s0, s1) from buf into Java's
-// planes. False, with a Java exception pending, if a read or a delivery fails.
+// of whole slices (at most imageJSlabBytes, at least one slice); after each
+// slab, deliver(buf, s0, s1) moves the read's slices [s0, s1) from buf into
+// Java's planes. False, with a Java exception pending, if a read or a delivery fails.
 template <typename Deliver>
 bool readImageJSlabs(JNIEnv* env, const Request& r, const ImageJStack& s, Deliver deliver) {
 	if (!holdsRead(env, r, s)) return false;
 	const uint64_t sliceBytes = r.sliceBytes();
-	uint64_t per = slabBytes / sliceBytes;
+	uint64_t per = (slabOverride > 0 ? slabOverride : imageJSlabBytes) / sliceBytes;
 	if (per < 1) per = 1;
 	if (per > r.slices) per = r.slices;
 	void* buf = malloc((size_t)(per * sliceBytes));
@@ -412,7 +449,7 @@ bool readImageJSlabs(JNIEnv* env, const Request& r, const ImageJStack& s, Delive
 		tDeliver += now() - b;
 	}
 	const double t1 = now();
-	free(buf);
+	release(buf, per * sliceBytes);
 	if (timing())
 		fprintf(stderr, "    [native tiff] ImageJ stack read through a %.2f GB buffer: reads %.3f s, into Java planes %.3f s, free %.3f s (%.2f GB, threads %d)\n",
 			per * sliceBytes / 1e9, tRead, tDeliver, now() - t1, r.slices * sliceBytes / 1e9, omp_get_max_threads());
@@ -465,25 +502,68 @@ bool rgbSlabToJava(JNIEnv* env, const TiffInfo& info, const void* buf, uint64_t 
 	});
 }
 
+// Slices of a cpp-tiff read per slab, or all of them for a read in one piece.
+// A buffer of the whole image holds the image twice beside Java's planes (a
+// 67 GB TIFF peaked at 197 GB) and has every page zeroed by the kernel; one
+// buffer reused slab after slab touches its pages once. But every cpp-tiff
+// call makes each of its threads open the file and walk the directories to
+// the slab's first slice, about 17 us per directory on 48 cores (10,000
+// slices of 1.8 MB read in 0.9-1.0 s in one piece, 1.1 s in 2 slabs, 1.4 s
+// in 4, 2.1 s in 8), against a decode of about 20 GB/s; so the smaller the
+// slices, the fewer the slabs: at most one per MiB of a slice, but 2 for any
+// read of 8 GiB or more. Measured on 48 cores, Java 8, the 67 GB TIFF of
+// 8 MB slices read natively in 5.4 s in one piece, 4.8-5.1 s in 2 slabs,
+// 4.7-4.8 s in 4 and 5.2-5.3 s in 8, its first open peaking at 197, 167, 150
+// and 143 GB; the 10,000 slices in 1.3-1.5 s in one piece and 1.5 s in 2.
+uint64_t tiffSlabSlices(const Request& r) {
+	const uint64_t sliceBytes = r.sliceBytes(), bytes = r.slices * sliceBytes;
+	uint64_t slabs = bytes / (slabOverride > 0 ? slabOverride : leastTiffSlabBytes);
+	if (slabs > maxTiffSlabs) slabs = maxTiffSlabs;
+	const uint64_t spread = sliceBytes / sliceBytesPerSlab > 2 ? sliceBytes / sliceBytesPerSlab : 2;
+	if (slabOverride == 0 && slabs > spread) slabs = spread;
+	if (slabs <= 1) return r.slices;
+	return (r.slices + slabs - 1) / slabs;
+}
+
 // Reads r's slices as stored and hands them to deliver(buf, s0, s1) (see
-// readImageJSlabs): an ImageJ stack a slab at a time, any other file in one
-// piece through cpp-tiff. False with a Java exception pending on failure.
+// readImageJSlabs): an ImageJ stack a slab at a time through raw reads, any
+// other file through cpp-tiff, a large read a slab at a time through one
+// reused buffer (tiffSlabSlices), a small one in one piece into a buffer
+// cpp-tiff allocates. False with a Java exception pending on failure.
 template <typename Deliver>
 bool readSlabs(JNIEnv* env, const Request& r, const ImageJStack& s, Deliver deliver) {
 	if (s.found) return readImageJSlabs(env, r, s, deliver);
+	const uint64_t sliceBytes = r.sliceBytes(), per = tiffSlabSlices(r);
 	const double t0 = now();
-	void* raw = readTiffParallelInfo(r.path.c_str(), r.info, nullptr, 0, { r.zStart, r.zStart + r.slices });
-	if (raw == nullptr) {
-		pfv::throwRuntime(env, readFailed);
+	void* buf = nullptr;
+	if (per < r.slices && (buf = malloc((size_t)(per * sliceBytes))) == nullptr) {
+		pfv::throwRuntime(env, "Not enough native memory to read the TIFF");
 		return false;
 	}
+	bool ok = true;
+	uint64_t slabs = 0;
+	double tRead = 0, tDeliver = 0;
+	for (uint64_t s0 = 0; s0 < r.slices && ok; s0 += per, slabs++) {
+		const uint64_t s1 = s0 + per < r.slices ? s0 + per : r.slices;
+		const double a = now();
+		void* got = readTiffParallelInfo(r.path.c_str(), r.info, buf, 0, { r.zStart + s0, r.zStart + s1 });
+		const double b = now();
+		if (got == nullptr) {
+			pfv::throwRuntime(env, readFailed);
+			ok = false;
+		}
+		else {
+			buf = got;
+			ok = deliver(buf, s0, s1);
+		}
+		tRead += b - a;
+		tDeliver += now() - b;
+	}
 	const double t1 = now();
-	const bool ok = deliver(raw, 0, r.slices);
-	const double t2 = now();
-	free(raw);
+	release(buf, per * sliceBytes);
 	if (timing())
-		fprintf(stderr, "    [native tiff] cpp-tiff read into a new buffer %.3f s, into Java planes %.3f s, free %.3f s (%.2f GB, threads %d)\n",
-			t1 - t0, t2 - t1, now() - t2, r.slices * r.sliceBytes() / 1e9, omp_get_max_threads());
+		fprintf(stderr, "    [native tiff] cpp-tiff read in %llu slab(s) through a %.2f GB buffer: reads %.3f s, into Java planes %.3f s, free %.3f s, total %.3f s (%.2f GB, threads %d)\n",
+			(unsigned long long)slabs, per * sliceBytes / 1e9, tRead, tDeliver, now() - t1, now() - t0, r.slices * sliceBytes / 1e9, omp_get_max_threads());
 	return ok;
 }
 
@@ -608,12 +688,13 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 }
 
 // For tests: the most bytes of slices a read of an ImageJ stack converts
-// through its native buffer at once (at least one slice; 0 or less: the
-// default, 1 GiB).
+// through its native buffer at once (at least one slice), and the least a
+// slab of a cpp-tiff read holds, then cut into slabs whatever its slices'
+// size; 0 or less: the defaults (1 GiB and 4 GiB, see tiffSlabSlices).
 JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_setTiffSlabBytes
 	(JNIEnv*, jclass, jlong bytes)
 {
-	slabBytes = bytes > 0 ? (uint64_t)bytes : defaultSlabBytes;
+	slabOverride = bytes > 0 ? (uint64_t)bytes : 0;
 }
 
 // The most threads the native reads of the calling thread use from now on

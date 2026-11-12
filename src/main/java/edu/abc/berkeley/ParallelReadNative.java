@@ -243,7 +243,10 @@ public class ParallelReadNative {
 	/**
 	 * For tests: the most bytes of slices a read of an ImageJ stack converts
 	 * through its native buffer at a time (1 GiB by default, at least one
-	 * slice; 0 or less: the default again). Other TIFFs are read in one piece.
+	 * slice), and the least a slab of a read through cpp-tiff holds (4 GiB by
+	 * default; reads of less than twice that are done in one piece, others in
+	 * at most 8 slabs, by default fewer for small slices); 0 or less: the
+	 * defaults again.
 	 */
 	static native void setTiffSlabBytes(long bytes);
 
