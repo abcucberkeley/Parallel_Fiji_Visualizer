@@ -142,8 +142,11 @@ public class ImageJStackOffsetTest {
 		for (int z : new int[] { 0, 1, 1048, STRADDLES - 1, STRADDLES, STRADDLES + 1, STRADDLES + 2 })
 			assertArrayEquals("slice " + z, expected(z), (short[]) tiff.read(z, z + 1)[0]);
 
-		// The virtual stack's blocks
+		// The virtual stack's blocks. Reading ahead is off in both virtual
+		// stacks here: its thread may still hold the file when the test
+		// deletes it, which Windows refuses, and this test is about offsets
 		ParallelVirtualStack stack = new ParallelVirtualStack(tiff);
+		stack.setReadAhead(false);
 		assertEquals(SLICES, stack.getSize());
 		for (int z : new int[] { SLICES - 1, STRADDLES, STRADDLES + 1, STRADDLES - 1, 0, 1000 })
 			assertArrayEquals("virtual slice " + z, expected(z), (short[]) stack.getProcessor(z + 1).getPixels());
@@ -153,6 +156,7 @@ public class ImageJStackOffsetTest {
 		ImagePlus imp = new PRT(path, false).getImp();
 		assertNotNull("did not open", imp);
 		assertTrue("not a virtual stack", imp.getStack().isVirtual());
+		((ParallelVirtualStack) imp.getStack()).setReadAhead(false);
 		assertEquals(SLICES, imp.getStackSize());
 		assertEquals(16, imp.getBitDepth());
 		for (int z : new int[] { STRADDLES, SLICES - 1, STRADDLES + 1, 0, 2 })
