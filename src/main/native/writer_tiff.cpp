@@ -62,17 +62,17 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_parallelWriteTi
 		pfv::throwRuntime(env, "Out of native memory assembling TIFF write buffer");
 		return;
 	}
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) {
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) {
 		free(buf);
 		return;
 	}
+	const char* fName = path.native.c_str();
 	// "lzw" preserves the plugin's historical output; cpp-tiff also accepts
 	// "zstd" and "none" should we ever expose a compression choice in the UI.
 	// Since cpp-tiff 1.7.0 a failed write (full disk, quota, unwritable path)
 	// is reported with a nonzero return instead of leaving a partial file.
 	const uint8_t failed = writeTiffParallelHelper(fName, buf, (uint64_t)bits, "w", ux, uy, uz, 0, false, "lzw");
-	env->ReleaseStringUTFChars(fileName, fName);
 	free(buf);
 	if (failed) pfv::throwRuntime(env, writeFailed);
 }
@@ -125,8 +125,9 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_writeTiffPlanes
 		pfv::throwRuntime(env, "The slices to write are not all in their native buffer");
 		return;
 	}
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return;
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) return;
+	const char* fName = path.native.c_str();
 	const uint64_t ux = (uint64_t)x, uy = (uint64_t)y, uz = (uint64_t)slices;
 	const void* buf = (const void*)(intptr_t)address;
 	uint8_t failed;
@@ -140,7 +141,6 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_writeTiffPlanes
 		const uint64_t rows = stripRows(ux, uy, (uint64_t)totalSlices, (uint64_t)bits / 8);
 		failed = writeTiffParallelWrapper(ux, uy, uz, fName, buf, (uint64_t)bits, 0, rows, append ? "a" : "w", false, "lzw");
 	}
-	env->ReleaseStringUTFChars(fileName, fName);
 	if (timingWanted())
 		fprintf(stderr, "    [native tiff write] %d slices%s in %.3f s\n", (int)slices, append ? " appended" : "", now() - began);
 	if (failed) pfv::throwRuntime(env, writeFailed);

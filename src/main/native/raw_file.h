@@ -7,8 +7,9 @@
 // the kernel (one handle shared by all threads defeats the read-ahead).
 // POSIX reads with pread; Windows with a FILE* per handle, positioned with
 // _fseeki64 before each fread. The path goes to open or fopen as the caller
-// has it, as cpp-tiff passes it to fopen and TIFFOpen: on Windows in the
-// system's code page.
+// has it: the one pfv::nativePath (jni_marshal.h) gives cpp-tiff for fopen
+// and TIFFOpen, so both open the same file (on Windows that path is in the
+// ANSI code page, or an 8.3 short path).
 //
 // Header-only and free of upstream headers, like jni_marshal.h.
 

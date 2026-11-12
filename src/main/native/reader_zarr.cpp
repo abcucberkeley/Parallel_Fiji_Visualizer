@@ -369,8 +369,8 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 	env->GetIntArrayRegion(jAxes, 0, 5, axes);
 	const std::vector<uint64_t> start = toVector(env, jStart);
 	const std::vector<uint64_t> end = toVector(env, jEnd);
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return nullptr;
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) return nullptr;
 	const double began = now();
 	double planned = began;
 	Times times;
@@ -379,7 +379,7 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 	std::string problem, cuts;
 	void* buf = nullptr;
 	try {
-		zarr Zarr(fName);
+		zarr Zarr(path.native);
 		Window w;
 		problem = plan(Zarr, start, end, axes, sizeof(S), w);
 		planned = now();
@@ -424,10 +424,9 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 			"copies into Java planes %.3f s, free %.3f s, total %.3f s (threads %d)%s%s\n",
 			planned - began, std::to_string(reads).c_str(), cOrder ? "C" : "F", times.lists, times.reads, times.fills,
 			now() - freed, now() - began, omp_get_max_threads(), cuts.empty() ? "" : ", cut: ", cuts.c_str());
-	env->ReleaseStringUTFChars(fileName, fName);
 	if (env->ExceptionCheck()) return nullptr;
 	if (!problem.empty()) {
-		pfv::throwRuntime(env, problem.c_str());
+		pfv::throwRuntime(env, path.readable(problem));
 		return nullptr;
 	}
 	return dest;
@@ -437,22 +436,21 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 // exception; fn may itself throw std::string codes.
 template <typename Fn>
 void withZarr(JNIEnv* env, jstring fileName, Fn fn) {
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return;
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) return;
 	try {
-		zarr Zarr(fName);
+		zarr Zarr(path.native);
 		fn(Zarr);
 	}
 	catch (const std::string& why) {
-		pfv::throwRuntime(env, pfv::zarrError(why).c_str());
+		pfv::throwRuntime(env, path.readable(pfv::zarrError(why)));
 	}
 	catch (const std::exception& e) {
-		pfv::throwRuntime(env, e.what());
+		pfv::throwRuntime(env, path.readable(e.what()));
 	}
 	catch (...) {
 		pfv::throwRuntime(env, "Reading the Zarr metadata failed");
 	}
-	env->ReleaseStringUTFChars(fileName, fName);
 }
 
 template <typename JavaT>

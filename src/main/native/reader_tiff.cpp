@@ -135,7 +135,7 @@ void release(void* buf, uint64_t bytes) {
 
 // A read: the file, its description, and its slices [zStart, zStart + slices)
 struct Request {
-	std::string path;
+	std::string path; // as the libraries open it (see pfv::nativePath)
 	TiffInfo info;
 	uint64_t zStart = 0, slices = 0;
 
@@ -156,10 +156,9 @@ bool request(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlon
 		pfv::throwRuntime(env, "The TIFF's data type does not match the read");
 		return false;
 	}
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return false;
-	r.path = fName;
-	env->ReleaseStringUTFChars(fileName, fName);
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) return false;
+	r.path = path.native;
 	r.zStart = (uint64_t)zStart;
 	r.slices = (uint64_t)(zEnd - zStart);
 	return true;
@@ -706,6 +705,26 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_limitThreads
 	omp_set_num_threads(threads > 0 ? (int)threads : omp_get_num_procs());
 }
 
+// For tests: the 8.3 short form Windows gives the path of a file or folder
+// that exists (see pfv::win::shortPath), or null if it gives none or
+// elsewhere than on Windows.
+JNIEXPORT jstring JNICALL Java_edu_abc_berkeley_ParallelReadNative_shortPathName
+	(JNIEnv* env, jclass, jstring path)
+{
+#ifdef _WIN32
+	if (path == nullptr) return nullptr;
+	const jsize n = env->GetStringLength(path);
+	std::wstring w((size_t)n, L'\0'), s;
+	if (n > 0) env->GetStringRegion(path, 0, n, (jchar*)&w[0]);
+	if (env->ExceptionCheck() || !pfv::win::shortPath(w, s)) return nullptr;
+	return env->NewString((const jchar*)s.data(), (jsize)s.size());
+#else
+	(void)env;
+	(void)path;
+	return nullptr;
+#endif
+}
+
 // The most threads the native reads of the calling thread use (for tests).
 JNIEXPORT jint JNICALL Java_edu_abc_berkeley_ParallelReadNative_threadLimit
 	(JNIEnv*, jclass)
@@ -717,11 +736,10 @@ JNIEXPORT jint JNICALL Java_edu_abc_berkeley_ParallelReadNative_threadLimit
 JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_getTiffInfo
 	(JNIEnv* env, jobject, jstring fileName)
 {
-	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return nullptr;
+	pfv::NativePath path;
+	if (!pfv::nativePath(env, fileName, path)) return nullptr;
 	TiffInfo info;
-	const uint8_t failed = getTiffInfo(fName, info);
-	env->ReleaseStringUTFChars(fileName, fName);
+	const uint8_t failed = getTiffInfo(path.native.c_str(), info);
 	if (failed) {
 		pfv::throwRuntime(env, "The file cannot be opened as a TIFF");
 		return nullptr;

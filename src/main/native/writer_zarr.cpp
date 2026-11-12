@@ -67,19 +67,20 @@ zarr newArray(const std::string& file, const std::vector<uint64_t>& shape, const
 		std::vector<uint64_t>(n, 0), false, std::vector<uint64_t>(n, 1));
 }
 
-// Runs write, turning what cpp-zarr throws into a RuntimeException. cpp-zarr
-// reports problems by throwing std::string, and nothing may escape a JNI
-// function: an uncaught C++ exception aborts the JVM, taking Fiji with it.
+// Runs write of the array at path, turning what cpp-zarr throws into a
+// RuntimeException. cpp-zarr reports problems by throwing std::string, and
+// nothing may escape a JNI function: an uncaught C++ exception aborts the JVM,
+// taking Fiji with it.
 template <typename Write>
-void guarded(JNIEnv* env, Write write) {
+void guarded(JNIEnv* env, const pfv::NativePath& path, Write write) {
 	try {
 		write();
 	}
 	catch (const std::string& why) {
-		pfv::throwRuntime(env, pfv::zarrError(why).c_str());
+		pfv::throwRuntime(env, path.readable(pfv::zarrError(why)));
 	}
 	catch (const std::exception& e) {
-		pfv::throwRuntime(env, e.what());
+		pfv::throwRuntime(env, path.readable(e.what()));
 	}
 	catch (...) {
 		pfv::throwRuntime(env, "Writing the Zarr failed");
@@ -93,14 +94,14 @@ void guarded(JNIEnv* env, Write write) {
 // metadata, the array's .zarray is written first. A region of whole chunks
 // (or ending at the array's edge) writes those chunk files exactly as a write
 // of the whole array does. Throws a RuntimeException if it fails.
-void writeZarrRegion(JNIEnv* env, const std::string& file, const void* data,
+void writeZarrRegion(JNIEnv* env, const pfv::NativePath& file, const void* data,
                      const std::vector<uint64_t>& shape, const std::vector<uint64_t>& chunks,
                      const std::vector<uint64_t>& start, const std::vector<uint64_t>& end,
                      const std::vector<uint64_t>& inStrides, const std::string& cname, uint64_t bits,
                      bool useUuid, bool metadata)
 {
-	guarded(env, [&]() {
-		zarr Zarr = newArray(file, shape, chunks, cname, bits);
+	guarded(env, file, [&]() {
+		zarr Zarr = newArray(file.native, shape, chunks, cname, bits);
 		if (metadata) Zarr.write_zarray();
 		Zarr.set_chunkInfo(start, end);
 		std::vector<uint64_t> region(shape.size());
@@ -126,19 +127,20 @@ bool checkArray(JNIEnv* env, const std::vector<uint64_t>& shape, const std::vect
 	return true;
 }
 
-// Both strings as std::string, or false (an exception pending) if the JVM has no memory for them
-bool strings(JNIEnv* env, jstring a, std::string& sa, jstring b, std::string& sb) {
-	const char* ca = env->GetStringUTFChars(a, nullptr);
-	const char* cb = ca == nullptr ? nullptr : env->GetStringUTFChars(b, nullptr);
-	if (ca != nullptr) {
-		sa = ca;
-		env->ReleaseStringUTFChars(a, ca);
+// The array's path (see pfv::nativePath) and the compressor's name, or false
+// with an exception pending
+bool strings(JNIEnv* env, jstring jFile, pfv::NativePath& file, jstring jCname, std::string& cname) {
+	if (!pfv::nativePath(env, jFile, file)) return false;
+	if (jCname == nullptr) {
+		pfv::throwRuntime(env, "No compressor was given");
+		return false;
 	}
-	if (cb != nullptr) {
-		sb = cb;
-		env->ReleaseStringUTFChars(b, cb);
-	}
-	return ca != nullptr && cb != nullptr;
+	const jsize n = env->GetStringLength(jCname);
+	std::vector<jchar> u((size_t)n + 1, 0);
+	if (n > 0) env->GetStringRegion(jCname, 0, n, u.data());
+	if (env->ExceptionCheck()) return false;
+	cname = pfv::utf8Of(u.data(), (size_t)n);
+	return true;
 }
 
 // Writes a new Zarr v2 array (see writeZarrRegion) of the given shape and
@@ -162,7 +164,8 @@ void writeZarr(JNIEnv* env, jstring fileName, jobjectArray slices, uint64_t plan
 		pfv::throwRuntime(env, "Out of native memory assembling Zarr write buffer");
 		return;
 	}
-	std::string file, cname;
+	pfv::NativePath file;
+	std::string cname;
 	if (strings(env, fileName, file, jCname, cname))
 		writeZarrRegion(env, file, raw, shape, chunks, std::vector<uint64_t>(shape.size(), 0), shape, inStrides, cname, bits, useUuid, true);
 	free(raw);
@@ -200,9 +203,10 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_writeZarrMetada
 {
 	const std::vector<uint64_t> shape = toVector(env, jShape), chunks = toVector(env, jChunks);
 	if (!checkArray(env, shape, chunks, shape, (uint64_t)jBits)) return;
-	std::string file, cname;
+	pfv::NativePath file;
+	std::string cname;
 	if (!strings(env, fileName, file, jCname, cname)) return;
-	guarded(env, [&]() { newArray(file, shape, chunks, cname, (uint64_t)jBits).write_zarray(); });
+	guarded(env, file, [&]() { newArray(file.native, shape, chunks, cname, (uint64_t)jBits).write_zarray(); });
 }
 
 // The region [start, end) of a Zarr v2 array whose metadata is written, from
@@ -235,7 +239,8 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelWriteNative_writeZarrPlanes
 		pfv::throwRuntime(env, "The region to write is not whole chunks of the array, or not all in its native buffer");
 		return;
 	}
-	std::string file, cname;
+	pfv::NativePath file;
+	std::string cname;
 	if (!strings(env, fileName, file, jCname, cname)) return;
 	const double began = now();
 	writeZarrRegion(env, file, (const void*)(intptr_t)address, shape, chunks, start, end, strides, cname,

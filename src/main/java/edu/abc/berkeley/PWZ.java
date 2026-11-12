@@ -165,6 +165,9 @@ public class PWZ {
 		catch(IOException e) {
 			throw new RuntimeException("Could not save " + dir.getName() + ": " + e, e);
 		}
+		catch(RuntimeException e) {
+			throw PWT.naming(e, out, dir);
+		}
 		finally {
 			progress.abort();
 			sampler.stop();

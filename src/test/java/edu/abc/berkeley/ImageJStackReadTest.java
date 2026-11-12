@@ -291,8 +291,10 @@ public class ImageJStackReadTest {
 
 	/**
 	 * Paths with a space read; a path with a character outside ASCII as well
-	 * where the JVM hands such names to the system as UTF-8, and anywhere just
-	 * as cpp-tiff reads such a path (Windows: in the system's code page).
+	 * where the JVM names files in UTF-8, and on Windows where the character
+	 * is in the ANSI code page (which the natives pass paths in there), and
+	 * anywhere just as cpp-tiff reads such a path. PathCharactersTest has
+	 * the characters outside any code page.
 	 */
 	@Test
 	public void pathsWithSpacesAndOtherCharacters() throws Exception {
@@ -308,7 +310,7 @@ public class ImageJStackReadTest {
 			Object[] fromCppTiff = readOrNull(cppTiff), planes = readOrNull(block);
 			String what = "\"" + name + "\" (file names in " + encoding + ")";
 			boolean ascii = name.chars().allMatch(c -> c < 128);
-			if (ascii || utf8Names(encoding)) assertNotNull(what + ": cpp-tiff cannot read it", fromCppTiff);
+			if (ascii || namesReachNatives(encoding)) assertNotNull(what + ": cpp-tiff cannot read it", fromCppTiff);
 			assertEquals(what + ": read as cpp-tiff reads it", fromCppTiff != null, planes != null);
 			if (planes != null) {
 				assertPlanesEqual(what, expected(l), planes);
@@ -317,8 +319,13 @@ public class ImageJStackReadTest {
 		}
 	}
 
-	private static boolean utf8Names(String encoding) {
-		return !System.getProperty("os.name").startsWith("Windows") && Charset.forName(encoding).equals(StandardCharsets.UTF_8);
+	/**
+	 * Whether the natives open every file Java names in encoding: the natives
+	 * pass paths in UTF-8, and on Windows in the ANSI code page, which is the
+	 * encoding Java names files in there (see nativePath in jni_marshal.h).
+	 */
+	private static boolean namesReachNatives(String encoding) {
+		return System.getProperty("os.name").startsWith("Windows") || Charset.forName(encoding).equals(StandardCharsets.UTF_8);
 	}
 
 	private static Object[] readOrNull(String path) {

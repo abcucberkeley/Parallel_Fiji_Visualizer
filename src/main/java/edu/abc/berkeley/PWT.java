@@ -128,6 +128,9 @@ public class PWT {
 		catch(IOException e) {
 			throw new RuntimeException("Could not save " + outFile.getName() + ": " + e, e);
 		}
+		catch(RuntimeException e) {
+			throw naming(e, part, outFile);
+		}
 		finally {
 			progress.abort();
 			// After a failure (the writers have closed it by now: Windows deletes no open file)
@@ -172,6 +175,18 @@ public class PWT {
 	}
 
 	private static final Random PART_IDS = new Random();
+
+	/**
+	 * e, or for a message that names the part a save writes (as the natives'
+	 * do when they cannot pass its path on), the same message naming the file
+	 * the user chose instead: the part is hidden, and its name means nothing
+	 * to them.
+	 */
+	static RuntimeException naming(RuntimeException e, File part, File file) {
+		String msg = e.getMessage();
+		if(msg == null || part.equals(file) || !msg.contains(part.getPath())) return e;
+		return new RuntimeException(msg.replace(part.getPath(), file.getPath()), e);
+	}
 
 	/** Makes the folders file is to go in, as cpp-tiff did for the files it wrote. */
 	static void makeFolders(File file) throws IOException {

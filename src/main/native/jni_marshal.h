@@ -10,6 +10,25 @@
 
 #include <omp.h>
 
+#ifdef _WIN32
+// For the conversion of paths (see nativePath), without windows.h's min and
+// max macros or its rarely used headers
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+// (MinGW's headers define them only for some _WIN32_WINNT targets)
+#ifndef WC_ERR_INVALID_CHARS
+#define WC_ERR_INVALID_CHARS 0x00000080
+#endif
+#ifndef WC_NO_BEST_FIT_CHARS
+#define WC_NO_BEST_FIT_CHARS 0x00000400
+#endif
+#endif
+
 // Shared helpers for moving image data between JNI arrays and native buffers.
 // Header-only on purpose: it must not include anything from cpp-tiff or
 // cpp-zarr -- both install a helperfunctions.h with the same include guard, so
@@ -43,11 +62,238 @@ template <> struct JniArrayTraits<int32_t> {
 	static ArrayType newArray(JNIEnv* env, jsize n) { return env->NewIntArray(n); }
 };
 
-// Throw a java.lang.RuntimeException (no-op if an exception is already pending).
-inline void throwRuntime(JNIEnv* env, const char* msg) {
+// The UTF-8 of n UTF-16 units, surrogate pairs combined into one character
+// (JNI's GetStringUTFChars gives Java's modified UTF-8 instead: each half of
+// a pair on its own, which names no file). A lone surrogate becomes '?', as
+// Java's own UTF-8 encoder writes it in the file names it makes.
+inline std::string utf8Of(const jchar* s, size_t n) {
+	std::string out;
+	out.reserve(n);
+	for (size_t i = 0; i < n; i++) {
+		uint32_t c = s[i];
+		if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF)
+			c = 0x10000 + ((c - 0xD800) << 10) + (uint32_t)(s[++i] - 0xDC00);
+		else if (c >= 0xD800 && c <= 0xDFFF)
+			c = '?';
+		if (c < 0x80) {
+			out += (char)c;
+		}
+		else if (c < 0x800) {
+			out += (char)(0xC0 | (c >> 6));
+			out += (char)(0x80 | (c & 0x3F));
+		}
+		else if (c < 0x10000) {
+			out += (char)(0xE0 | (c >> 12));
+			out += (char)(0x80 | ((c >> 6) & 0x3F));
+			out += (char)(0x80 | (c & 0x3F));
+		}
+		else {
+			out += (char)(0xF0 | (c >> 18));
+			out += (char)(0x80 | ((c >> 12) & 0x3F));
+			out += (char)(0x80 | ((c >> 6) & 0x3F));
+			out += (char)(0x80 | (c & 0x3F));
+		}
+	}
+	return out;
+}
+
+// The UTF-16 of the UTF-8 text s; a byte that does not start a valid UTF-8
+// sequence becomes U+FFFD.
+inline std::vector<jchar> utf16Of(const std::string& s) {
+	std::vector<jchar> out;
+	out.reserve(s.size());
+	for (size_t i = 0; i < s.size();) {
+		const unsigned char b = (unsigned char)s[i];
+		uint32_t c;
+		size_t len;
+		if (b < 0x80) { c = b; len = 1; }
+		else if (b >= 0xC2 && b <= 0xDF) { c = b & 0x1Fu; len = 2; }
+		else if (b >= 0xE0 && b <= 0xEF) { c = b & 0x0Fu; len = 3; }
+		else if (b >= 0xF0 && b <= 0xF4) { c = b & 0x07u; len = 4; }
+		else { c = 0; len = 0; }
+		bool ok = len > 0 && i + len <= s.size();
+		for (size_t k = 1; ok && k < len; k++) {
+			const unsigned char t = (unsigned char)s[i + k];
+			ok = (t & 0xC0) == 0x80;
+			c = (c << 6) | (t & 0x3Fu);
+		}
+		// (overlong forms, surrogates and values past U+10FFFF are not UTF-8)
+		ok = ok && !(len == 3 && c < 0x800) && !(len == 4 && (c < 0x10000 || c > 0x10FFFF)) && !(c >= 0xD800 && c <= 0xDFFF);
+		if (!ok) {
+			out.push_back(0xFFFD);
+			i++;
+			continue;
+		}
+		if (c >= 0x10000) {
+			out.push_back((jchar)(0xD800 + ((c - 0x10000) >> 10)));
+			out.push_back((jchar)(0xDC00 + ((c - 0x10000) & 0x3FF)));
+		}
+		else {
+			out.push_back((jchar)c);
+		}
+		i += len;
+	}
+	return out;
+}
+
+// Throw a java.lang.RuntimeException (no-op if an exception is already
+// pending). msg is UTF-8, as the paths in it are: ThrowNew would read it as
+// modified UTF-8, which differs for characters outside the BMP.
+inline void throwRuntime(JNIEnv* env, const std::string& msg) {
 	if (env->ExceptionCheck()) return;
 	jclass cls = env->FindClass("java/lang/RuntimeException");
-	if (cls != nullptr) env->ThrowNew(cls, msg);
+	if (cls == nullptr) return;
+	const std::vector<jchar> text = utf16Of(msg);
+	const jchar none = 0;
+	jstring jmsg = env->NewString(text.empty() ? &none : text.data(), (jsize)text.size());
+	jmethodID init = jmsg == nullptr ? nullptr : env->GetMethodID(cls, "<init>", "(Ljava/lang/String;)V");
+	jobject e = init == nullptr ? nullptr : env->NewObject(cls, init, jmsg);
+	// (when one of these fails, an OutOfMemoryError is pending instead)
+	if (e != nullptr) {
+		env->Throw((jthrowable)e);
+		env->DeleteLocalRef(e);
+	}
+	if (jmsg != nullptr) env->DeleteLocalRef(jmsg);
+	env->DeleteLocalRef(cls);
+}
+
+inline void throwRuntime(JNIEnv* env, const char* msg) {
+	throwRuntime(env, std::string(msg != nullptr ? msg : ""));
+}
+
+// A path from Java as the JNI functions hand it to cpp-tiff, cpp-zarr and
+// RawFile (native), and as it was given, in UTF-8 (utf8).
+struct NativePath {
+	std::string utf8, native;
+
+	// msg with the path as the libraries had it put back as it was given
+	// (cpp-zarr's messages hold the paths it was handed)
+	std::string readable(const std::string& msg) const {
+		if (native.empty() || native == utf8) return msg;
+		std::string out;
+		size_t from = 0;
+		for (size_t at; (at = msg.find(native, from)) != std::string::npos; from = at + native.size())
+			out.append(msg, from, at - from).append(utf8);
+		return out.append(msg, from, std::string::npos);
+	}
+};
+
+#ifdef _WIN32
+namespace win {
+
+// w in the ANSI code page, in which narrow Win32 calls (CreateFileA, fopen,
+// mkdir) read their paths, if each of its characters is there as itself:
+// WC_NO_BEST_FIT_CHARS keeps stand-ins that look alike (a plain a for an a
+// with a ring) from naming another file, and the bytes are read back to be sure.
+inline bool toAnsi(const std::wstring& w, std::string& out) {
+	if (w.empty()) {
+		out.clear();
+		return true;
+	}
+	// With "Beta: Use Unicode UTF-8 for worldwide language support" the ANSI
+	// code page is UTF-8, which takes neither that flag nor usedDefault
+	const bool utf8 = GetACP() == CP_UTF8;
+	const DWORD flags = utf8 ? WC_ERR_INVALID_CHARS : WC_NO_BEST_FIT_CHARS;
+	BOOL usedDefault = FALSE;
+	const int n = WideCharToMultiByte(CP_ACP, flags, w.data(), (int)w.size(), nullptr, 0, nullptr, utf8 ? nullptr : &usedDefault);
+	if (n <= 0 || usedDefault) return false;
+	std::string a((size_t)n, '\0');
+	if (WideCharToMultiByte(CP_ACP, flags, w.data(), (int)w.size(), &a[0], n, nullptr, utf8 ? nullptr : &usedDefault) != n || usedDefault)
+		return false;
+	const int m = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, a.data(), n, nullptr, 0);
+	if (m != (int)w.size()) return false;
+	std::wstring back((size_t)m, L'\0');
+	if (MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, a.data(), n, &back[0], m) != m || back != w) return false;
+	out.swap(a);
+	return true;
+}
+
+// The 8.3 short form of the path w of a file or folder that exists. Where
+// the volume keeps no short name for a component, Windows gives that
+// component as it is.
+inline bool shortPath(const std::wstring& w, std::wstring& out) {
+	const DWORD n = GetShortPathNameW(w.c_str(), nullptr, 0);
+	if (n == 0) return false;
+	std::wstring s((size_t)n, L'\0');
+	const DWORD got = GetShortPathNameW(w.c_str(), &s[0], n);
+	if (got == 0 || got >= n) return false;
+	s.resize(got);
+	out.swap(s);
+	return true;
+}
+
+// The short form of w (see shortPath), or for a file not made yet (a save),
+// the short form of the deepest folder of it that exists followed by the rest
+// of w as it is.
+inline bool shortPathOf(const std::wstring& w, std::wstring& out) {
+	if (shortPath(w, out)) return true;
+	for (size_t end = w.find_last_of(L"\\/"); end != std::wstring::npos && end > 0; end = w.find_last_of(L"\\/", end - 1)) {
+		std::wstring parent = w.substr(0, end), s;
+		if (parent.back() == L':') parent += L'\\'; // a drive's root
+		if (!shortPath(parent, s)) continue;
+		if (s.back() != L'\\' && s.back() != L'/') s += L'\\';
+		out = s + w.substr(end + 1);
+		return true;
+	}
+	return false;
+}
+
+} // namespace win
+#endif
+
+// The path as the libraries are to open it: false, with a RuntimeException
+// pending, if it cannot be passed to them. Every JNI function that takes a
+// path converts it here, RawFile's reads included, so all open the same file.
+//
+// It is UTF-8 (standard, not JNI's modified UTF-8) everywhere but on Windows.
+// There cpp-tiff and cpp-zarr 1.7.3 open files with narrow calls (TIFFOpen's
+// CreateFileA, fopen, std::ifstream of a std::string), which read the path in
+// the ANSI code page, as MATLAB passes it: an ASCII path goes as it is; else
+// the path in the ANSI code page, where it has all of its characters; else
+// its 8.3 short form (ASCII where the volume keeps short names), for a file
+// not made yet that of its deepest existing folder followed by the rest, if
+// that is in the ANSI code page. A path none of these can name is refused,
+// with a message saying what to do.
+// TODO: remove the Windows conversion when PFV moves to cpp-tiff and cpp-zarr
+// releases that accept UTF-8 paths on Windows, and pass UTF-8 there too.
+inline bool nativePath(JNIEnv* env, jstring path, NativePath& out) {
+	if (path == nullptr) {
+		throwRuntime(env, "No file name was given");
+		return false;
+	}
+	const jsize n = env->GetStringLength(path);
+	std::vector<jchar> u((size_t)n + 1, 0);
+	if (n > 0) env->GetStringRegion(path, 0, n, u.data());
+	if (env->ExceptionCheck()) return false;
+	out.utf8 = utf8Of(u.data(), (size_t)n);
+	bool ascii = true;
+	for (jsize i = 0; i < n; i++) {
+		if (u[(size_t)i] == 0) {
+			// C would take the path to end there, at another file
+			throwRuntime(env, "The path \"" + out.utf8 + "\" holds a NUL character, which no file name can hold");
+			return false;
+		}
+		if (u[(size_t)i] >= 0x80) ascii = false;
+	}
+#ifdef _WIN32
+	if (ascii) {
+		out.native = out.utf8;
+		return true;
+	}
+	const std::wstring w(u.begin(), u.begin() + n);
+	std::wstring s;
+	if (win::toAnsi(w, out.native)) return true;
+	if (win::shortPathOf(w, s) && win::toAnsi(s, out.native)) return true;
+	out.native.clear();
+	throwRuntime(env, out.utf8 + ": the name of a folder or file in this path has characters that Windows cannot pass to "
+		"the TIFF and Zarr readers and writers in this version of the plugin. Rename the folder or file, or move the file "
+		"to a folder whose path has none of them.");
+	return false;
+#else
+	(void)ascii;
+	out.native = out.utf8;
+	return true;
+#endif
 }
 
 // Called from JNI_OnLoad of each JNI library. cpp-tiff and cpp-zarr each link

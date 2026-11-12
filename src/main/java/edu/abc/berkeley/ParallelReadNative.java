@@ -250,6 +250,15 @@ public class ParallelReadNative {
 	 */
 	static native void setTiffSlabBytes(long bytes);
 
+	/**
+	 * For tests: the 8.3 short form Windows gives the path of a file or folder
+	 * that exists, which the natives pass to the readers for a path that is
+	 * not all in the ANSI code page; null if there is none, or elsewhere than
+	 * on Windows. Where the volume keeps no short name for a component, it is
+	 * in the result as it is.
+	 */
+	static native String shortPathName(String path);
+
 	// --- Zarr ---
 	// A read takes the window [start, end), one value per axis of the array,
 	// and axes = {x, y, z, c, t}: the axes that are the image's columns, rows,
