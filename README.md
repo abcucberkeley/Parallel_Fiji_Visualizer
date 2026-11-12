@@ -11,6 +11,7 @@ bundled inside the plugin jar and loaded automatically.
 ## Limitations
 1. RGB images are saved with ImageJ's own tiff writer rather than the parallel one, and cannot be saved as zarr
 2. Complex-valued zarr arrays cannot be opened. Data types ImageJ lacks are converted: float16, bfloat16, 32- and 64-bit integers and doubles open as 32-bit float images, and bool arrays as images of 0 and 1
+3. On Windows, file and folder names with characters outside the system's code page (Chinese or Japanese on a Western Windows, for example, or emoji) work only for files and folders that exist on drives keeping short 8.3 names, as most system drives do, and a file being saved needs a name in the code page. The plugin says when a path cannot be used. Names in the code page, such as é or µ, work everywhere, and on Linux and macOS any name works
 
 ## Quick Start Guide
 
@@ -52,7 +53,9 @@ Axis names come from the metadata: Zarr v3 `dimension_names`, xarray's
 - **Zarr v2:** MATLAB's order (y, x, z, c, t), as PetaKit5D and this plugin
   write them. Chunks of 1 on the first axes mean NumPy's order (t, c, z, y, x)
   instead, and so does C storage order for 4D and 5D arrays.
-- **Zarr v3:** (t, z, y, x, c), or (t, c, z, y, x) when the last axis is longer than 8.
+- **Zarr v3:** (t, z, y, x, c), or (t, c, z, y, x) when the last axis is longer than 8,
+  so arrays with more than 8 channels last need their axis names (or the
+  **Zarr axis order** below).
 
 Arrays with fewer axes leave out the ones they lack: a 4D Zarr v2 array is
 (y, x, z, t), and a 3D Zarr v3 volume (z, y, x).
@@ -65,17 +68,32 @@ axes, so give one per number of axes, separated by commas: `yxz, tzyxc`.
 `call("ij.Prefs.set", "pfv.zarrAxisOrder", "tzyxc");`.
 
 ### Large images and color
-TIFF and Zarr images bigger than Fiji's memory (**Edit › Options › Memory &
-Threads**) open as virtual stacks, read a block of planes at a time as you
-scroll. 8-bit color TIFFs open as RGB images, and 16-bit or float color as one
-channel per color, as ImageJ shows them.
+TIFF and Zarr images that do not fit in Fiji's memory (**Edit › Options ›
+Memory & Threads**) open as virtual stacks, which read a block of planes at a
+time as they are shown, and read the next block ahead while you scroll or play
+them. The plugin counts what an image really needs in Java's memory (large
+planes can take up to twice their size) beside the images already open, and a
+line in the **Log** window says when an image opens as a virtual stack, and
+why. If memory runs short while an image is being read, it opens as a virtual
+stack instead of failing. Virtual stacks are ordinary ImageJ images: macros,
+Duplicate, ImageJ's own Save As and its tools work on them.
+
+8-bit color TIFFs open as RGB images, and 16-bit or float color as one channel
+per color, as ImageJ shows them.
 
 ### Saving
 **Save as Tiff** and **Save as Zarr** save in the background, so Fiji stays
 usable while they run. The image is locked until it has been saved, as ImageJ
 locks the images its commands are working on: its sliders are greyed out and
-other commands leave it alone. Saving a virtual stack reads all of its planes,
-so it has to fit in Fiji's memory.
+other commands leave it alone.
+
+Images are saved a run of planes at a time, so a save needs about 1 GB (TIFF)
+to 5 GB (Zarr) of memory beside Fiji's instead of a second copy of the image,
+and virtual stacks larger than memory can be saved too: a TIFF bigger than
+memory can be saved as Zarr, for example. A save is written under a hidden
+temporary name next to the file you chose and renamed when it is complete, so
+a save that fails leaves nothing under that name, and a file saved there
+before stays as it was.
 
 ### Saving as Zarr
 **Save as Zarr** writes a Zarr v2 array in MATLAB's axis order, as PetaKit5D
@@ -112,7 +130,10 @@ the three native sets into one cross-platform jar.
 native round trips for every data type, end-to-end reads through the plugin's
 readers, Zarr v2, v3 and OME-Zarr layouts and their axes, color and ImageJ
 TIFFs, saving stacks and hyperstacks as Zarr, folder and hyperstack opening,
-the virtual stacks, and checks that the plugin still loads in a stock Fiji. `mvn package -Pnative` builds the natives
+the virtual stacks, reads and saves in slabs (each compared plane by plane, or
+byte by byte, with a read or save in one piece), images that do not fit in
+memory, paths with non-ASCII characters, and checks that the plugin still
+loads in a stock Fiji. `mvn package -Pnative` builds the natives
 and runs every test; a test that needs the natives fails if they were built but
 cannot be loaded. Without `-Pnative` those tests are skipped and the Java-only
 tests still run.
