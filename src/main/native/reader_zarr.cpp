@@ -582,6 +582,32 @@ JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_getZarrDim
 	return rval;
 }
 
+// The shape, as getZarrDims gives it, with the dtype and bits per element of
+// getZarrDtype and getZarrDataType put in dtype[0] and bits[0]: one read of
+// the metadata instead of three.
+JNIEXPORT jlongArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_getZarrInfo
+	(JNIEnv* env, jobject, jstring fileName, jobjectArray dtype, jlongArray bits)
+{
+	if (dtype == nullptr || bits == nullptr || env->GetArrayLength(dtype) < 1 || env->GetArrayLength(bits) < 1) {
+		pfv::throwRuntime(env, "getZarrInfo needs a String[1] for the dtype and a long[1] for the bits");
+		return nullptr;
+	}
+	jlongArray rval = nullptr;
+	withZarr(env, fileName, [&](zarr& Zarr) {
+		const uint64_t n = Zarr.get_ndims();
+		std::vector<jlong> dims((size_t)n);
+		for (uint64_t d = 0; d < n; d++) dims[(size_t)d] = (jlong)Zarr.get_shape(d);
+		jstring name = env->NewStringUTF(Zarr.get_dtype().c_str());
+		if (name == nullptr) return;
+		env->SetObjectArrayElement(dtype, 0, name);
+		const jlong b = (jlong)(Zarr.dtypeBytes() * 8);
+		env->SetLongArrayRegion(bits, 0, 1, &b);
+		rval = env->NewLongArray((jsize)n);
+		if (rval != nullptr) env->SetLongArrayRegion(rval, 0, (jsize)n, dims.data());
+	});
+	return rval;
+}
+
 // For tests: the least a slab of a big read holds (see plan).
 JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_setZarrSlabBytes
 	(JNIEnv*, jclass, jlong bytes)

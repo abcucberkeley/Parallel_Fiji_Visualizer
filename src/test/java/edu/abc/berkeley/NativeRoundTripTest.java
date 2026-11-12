@@ -127,6 +127,26 @@ public class NativeRoundTripTest {
 
 	// --- Zarr ---
 
+	/** The one-read getZarrInfo gives what the three single calls give. */
+	@Test
+	public void zarrInfoInOneRead() throws Exception {
+		String[] paths = {
+			writeZarr(shortSlices(), 16, "u16.zarr"),
+			writeZarr(byteSlices(), 8, "u8.zarr"),
+			writeZarr(floatSlices(), 32, "f32.zarr"),
+			ZarrFixture.writeV3(new File(tmp.getRoot(), "v3.zarr"), new long[] { 2, 6, 5, 4 }, new long[] { 1, 3, 5, 4 }, 'C',
+				new String[] { "t", "z", "y", "x" }).getPath(),
+			ZarrFixture.writeV3Sharded(new File(tmp.getRoot(), "sharded.zarr"), new long[] { 8, 6, 4 }, new long[] { 4, 6, 4 },
+				new long[] { 2, 3, 2 }, 'C', null).getPath() };
+		for (String path : paths) {
+			String[] dtype = new String[1];
+			long[] bits = new long[1];
+			assertArrayEquals(path, reader.getZarrDims(path), reader.getZarrInfo(path, dtype, bits));
+			assertEquals(path, reader.getZarrDtype(path), dtype[0]);
+			assertEquals(path, reader.getZarrDataType(path), bits[0]);
+		}
+	}
+
 	@Test
 	public void zarrUint16RoundTrip() {
 		short[][] slices = shortSlices();
@@ -251,11 +271,12 @@ public class NativeRoundTripTest {
 	@Test
 	public void notAZarrFolderThrowsInsteadOfCrashing() throws Exception {
 		String path = tmp.newFolder("empty.zarr").getPath();
-		for (int call = 0; call < 3; call++) {
+		for (int call = 0; call < 4; call++) {
 			try {
 				if (call == 0) reader.getZarrDataType(path);
 				else if (call == 1) reader.getZarrDims(path);
-				else reader.getZarrDtype(path);
+				else if (call == 2) reader.getZarrDtype(path);
+				else reader.getZarrInfo(path, new String[1], new long[1]);
 				fail("no exception for a folder without Zarr metadata (call " + call + ")");
 			}
 			catch (RuntimeException e) {

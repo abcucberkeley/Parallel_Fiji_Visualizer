@@ -464,4 +464,11 @@ public class ParallelReadNative {
 
 	/** Shape of the zarr on disk, one value per axis. */
 	public native long[] getZarrDims(String fileName);
+
+	/**
+	 * What getZarrDims, getZarrDtype and getZarrDataType give, from one read
+	 * of the metadata: the shape is returned, the dtype put in dtype[0] and
+	 * the bits per pixel in bits[0].
+	 */
+	public native long[] getZarrInfo(String fileName, String[] dtype, long[] bits);
 }

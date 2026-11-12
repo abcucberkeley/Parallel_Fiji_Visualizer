@@ -117,11 +117,13 @@ public final class ZarrImage {
 	private ZarrImage(String title, ZarrMetadata m, Ome ome) {
 		this.title = title;
 		this.path = m.dir.getPath();
-		// cpp-zarr's view of the array: it must be able to read it
-		ParallelReadNative reader = new ParallelReadNative();
-		this.shape = reader.getZarrDims(path);
-		this.dtype = reader.getZarrDtype(path);
-		this.bits = (int) reader.getZarrDataType(path);
+		// cpp-zarr's view of the array (it must be able to read it), from one
+		// read of the metadata
+		String[] type = new String[1];
+		long[] typeBits = new long[1];
+		this.shape = new ParallelReadNative().getZarrInfo(path, type, typeBits);
+		this.dtype = type[0];
+		this.bits = (int) typeBits[0];
 		this.kind = dtypeKind(dtype);
 		if (kind == 'c') throw new IllegalArgumentException(title + " holds complex numbers (" + dtype + "), which ImageJ cannot show");
 		if (kind == '?') throw new IllegalArgumentException(title + " has a data type the plugin cannot show: " + dtype);
