@@ -441,9 +441,17 @@ public class ParallelReadNative {
 
 	/**
 	 * For tests: the least a slab of a big Zarr read holds (1 GiB by default;
-	 * reads of less than twice that are done at once).
+	 * reads of less than twice that are not cut into slabs, and a read of one
+	 * channel at a time must hold a 64th of it).
 	 */
 	static native void setZarrSlabBytes(long bytes);
+
+	/**
+	 * For tests: how a read of the window would be cut, e.g. "C order, 16
+	 * reads: t in 2, z in 4, c by index" (the axes from the slowest; "by
+	 * index": one index per read) or "F order, 1 read"; or why it cannot be done.
+	 */
+	static native String describeZarrRead(String fileName, long[] start, long[] end, int[] axes);
 
 	/** Bits per pixel of the zarr on disk. */
 	public native long getZarrDataType(String fileName);

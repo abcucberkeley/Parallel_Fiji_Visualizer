@@ -14,8 +14,10 @@
 
 #include <jni.h>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <string>
@@ -39,23 +41,77 @@ std::vector<uint64_t> toVector(JNIEnv* env, jlongArray a) {
 
 enum { X, Y, Z, C, T };
 
+// With the environment variable PFV_TIMING set, every read prints the seconds
+// of its parts on stderr (for measurements; the plugin itself never sets it)
+bool timingWanted() {
+	static const bool on = getenv("PFV_TIMING") != nullptr;
+	return on;
+}
+
+double now() {
+	return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 // A read's window [start, end), which of the array's axes are x, y, z, c and t
 // (and the image's size along them), the memory order cpp-zarr writes the
-// window in, and the slabs it is read in: [cuts[i], cuts[i + 1]) along image
-// axis slabAxis (window-relative), or all of it in one read when slabAxis < 0.
+// window in, and the pieces it is read in: along each of z, c and t the
+// window-relative ranges [cuts[i][k], cuts[i][k + 1]), every combination of
+// one range per axis read by one cpp-zarr call. byIndex marks the axes read
+// one index at a time because their indices interleave the planes.
 struct Window {
 	std::vector<uint64_t> start, end;
 	jint axes[5];
 	uint64_t size[5];
 	bool cOrder = false;
-	int slabAxis = -1;
-	std::vector<uint64_t> cuts;
+	bool byIndex[5] = { false, false, false, false, false };
+	std::vector<uint64_t> cuts[5];
 	uint64_t planes() const { return size[Z] * size[C] * size[T]; }
+	// The most indices a piece holds along image axis i
+	uint64_t thickest(int i) const {
+		uint64_t most = 0;
+		for (size_t k = 0; k + 1 < cuts[i].size(); k++) most = std::max(most, cuts[i][k + 1] - cuts[i][k]);
+		return most;
+	}
+	uint64_t pieces(int i) const { return cuts[i].size() - 1; }
+	uint64_t reads() const { return pieces(Z) * pieces(C) * pieces(T); }
+	// z, c and t from the slowest to the fastest in the read's memory order
+	// (axes the image does not have last)
+	std::vector<int> nesting() const {
+		std::vector<int> order = { Z, C, T };
+		const jint* a = axes;
+		const bool c = cOrder;
+		std::stable_sort(order.begin(), order.end(), [a, c](int p, int q) {
+			if ((a[p] < 0) != (a[q] < 0)) return a[q] < 0;
+			return c ? a[p] < a[q] : a[p] > a[q];
+		});
+		return order;
+	}
 };
 
 // Slabs hold at least this much: per-read costs stay small next to the read.
 // (Tests set it lower to read small arrays in slabs.)
 uint64_t minSlabBytes = (uint64_t)1 << 30;
+
+// How a read is cut along z, c and t, from the slowest axis: "t in 2, z in 4,
+// c by index", or "" when it is read at once
+std::string cutsOf(const Window& w) {
+	static const char* const names[5] = { "x", "y", "z", "c", "t" };
+	std::string s;
+	for (int i : w.nesting()) {
+		if (w.pieces(i) < 2) continue;
+		s += std::string(s.empty() ? "" : ", ") + names[i] + (w.byIndex[i] ? " by index" : " in " + std::to_string(w.pieces(i)));
+	}
+	return s;
+}
+
+// The same with the read's memory order and number of reads, for tests: "C
+// order, 16 reads: t in 2, z in 4, c by index" or "F order, 1 read"
+std::string describe(const Window& w) {
+	const uint64_t reads = w.reads();
+	const std::string cuts = cutsOf(w);
+	return std::string(w.cOrder ? "C" : "F") + " order, " + std::to_string(reads) + (reads == 1 ? " read" : " reads")
+		+ (cuts.empty() ? "" : ": " + cuts);
+}
 
 // Checks a read and plans it; returns why it cannot be done, or "".
 std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vector<uint64_t>& end,
@@ -102,58 +158,131 @@ std::string plan(zarr& Zarr, const std::vector<uint64_t>& start, const std::vect
 		if (d > lo) last = false;
 	}
 	w.cOrder = last && !first ? true : first && !last ? false : Zarr.get_order() == "C";
+	for (int i = Z; i <= T; i++) w.cuts[i] = { 0, w.size[i] };
 
-	// Big windows are read in slabs through one buffer. A fresh buffer of the
+	uint64_t bytes = w.size[X] * w.size[Y] * w.planes() * elemBytes;
+
+	// The indices along array axis d that one decoded chunk holds: for a
+	// sharded array its inner chunks, which are decoded one by one
+	auto chunkExtent = [&Zarr](int64_t d) -> uint64_t {
+		return Zarr.get_shard() ? Zarr.get_chunk_shape((uint64_t)d) : Zarr.get_chunks((uint64_t)d);
+	};
+
+	// Planes compact in neither order are interleaved, in the order that puts
+	// x fastest (C when x comes after y, F when before), by the axes that come
+	// after y there, such as the channels of a (t, z, y, x, c) array. cpp-zarr
+	// then copies every chunk element by element into cache lines that the
+	// threads copying the other indices write too (17 GB at 7.7 GB/s on 48
+	// cores and 1.6 GB/s on 24, against 26 and 11 GB/s for one channel), and
+	// the planes are gathered again. When x is stored faster than y, these
+	// axes are read one index at a time instead, each read's planes compact
+	// blocks with x fastest, if that decodes no chunk twice: no chunk spans two
+	// indices of the axis, or the chunks store it slowest of their axes of
+	// more than one index (channel-planar chunks, stored (t, c, z, y, x) by a
+	// transpose codec), compressed by blosc or not at all, which a read of one
+	// index decodes only the part of. Each read must hold at least a 64th of a
+	// slab (16 MiB): a read costs about a millisecond beyond its data.
+	// (Windows of 64 MB took about as long either way on 48 cores; of 270 MB
+	// and 1 GB a third as long one channel at a time.)
+	if (!first && !last) {
+		const std::vector<uint64_t> stored = Zarr.get_chunkAxisOrder(); // slowest first
+		std::vector<uint64_t> rank((size_t)n, 0);
+		int64_t slowest = -1;
+		for (size_t k = 0; k < stored.size(); k++) {
+			if (stored[k] >= (uint64_t)n) continue;
+			rank[stored[k]] = k;
+			if (slowest < 0 && chunkExtent((int64_t)stored[k]) > 1) slowest = (int64_t)stored[k];
+		}
+		const bool partial = compressor == "blosc" || compressor == "none";
+		const bool xAfterY = axes[X] > axes[Y];
+		bool byIndex[5] = { false, false, false, false, false }, any = false;
+		bool ok = stored.size() == (size_t)n && rank[axes[X]] > rank[axes[Y]];
+		for (int i = Z; i <= T && ok; i++) {
+			if (axes[i] < 0 || w.size[i] < 2 || (xAfterY ? axes[i] < axes[Y] : axes[i] > axes[Y])) continue;
+			ok = chunkExtent(axes[i]) == 1 || (partial && axes[i] == slowest);
+			byIndex[i] = any = true;
+		}
+		// With those axes at one index, the planes must be compact blocks with x
+		// fastest in that order
+		bool f = true, l = true;
+		for (int64_t d = 0; d < n; d++) {
+			bool single = d == axes[X] || d == axes[Y] || extent[d] == 1;
+			for (int i = Z; i <= T; i++) single = single || (byIndex[i] && axes[i] == d);
+			if (single) continue;
+			if (d < hi) f = false;
+			if (d > lo) l = false;
+		}
+		uint64_t each = bytes;
+		for (int i = Z; i <= T; i++)
+			if (byIndex[i]) each /= w.size[i];
+		if (ok && any && (xAfterY ? l : f) && each >= minSlabBytes / 64) {
+			w.cOrder = xAfterY;
+			for (int i = Z; i <= T; i++) {
+				if (!(w.byIndex[i] = byIndex[i])) continue;
+				w.cuts[i].clear();
+				for (uint64_t k = 0; k <= w.size[i]; k++) w.cuts[i].push_back(k);
+				bytes /= w.size[i];
+			}
+		}
+	}
+
+	// Big windows are read in pieces through one buffer. A fresh buffer of the
 	// whole window spends up to half the read having its pages zeroed by the
-	// kernel; a reused one is zeroed once, and only a slab is held. Slabs run
-	// along the slowest of z, c and t in the read's memory order, start and end
-	// on chunk boundaries (no chunk is decoded twice) and hold at least
-	// minSlabBytes, so windows under twice that are read at once.
-	const uint64_t bytes = w.size[X] * w.size[Y] * w.planes() * elemBytes;
-	if (bytes < 2 * minSlabBytes) return "";
-	int axis = -1;
-	for (int i = Z; i <= T; i++) {
-		if (axes[i] < 0 || w.size[i] < 2) continue;
-		if (axis < 0 || (w.cOrder ? axes[i] < axes[axis] : axes[i] > axes[axis])) axis = i;
+	// kernel; a reused one is zeroed once, and only a piece is held. Pieces
+	// under twice minSlabBytes are read at once; bigger ones are cut into
+	// slabs, along the slowest axis in the read's memory order first, each
+	// slab starting and ending on chunk boundaries (no chunk is decoded twice)
+	// and holding at least minSlabBytes. A slab that still holds twice that is
+	// cut along the next axis too, so that the buffer stays near minSlabBytes
+	// even when one step of the slowest axis is far bigger (one time point of
+	// one channel of a (t, z, y, x, c) array of 17 GB holds 4.3 GB).
+	for (int i : w.nesting()) {
+		if (bytes < 2 * minSlabBytes) break;
+		if (axes[i] < 0 || w.size[i] < 2 || w.byIndex[i]) continue;
+		const uint64_t a = (uint64_t)axes[i], chunk = chunkExtent(axes[i]);
+		const uint64_t perUnit = bytes / w.size[i];
+		const uint64_t rows = (minSlabBytes + perUnit * chunk - 1) / (perUnit * chunk);
+		const uint64_t step = chunk * (rows > 0 ? rows : 1);
+		w.cuts[i].assign(1, 0);
+		for (uint64_t p = start[a]; p < end[a];) {
+			const uint64_t next = (p / step + 1) * step < end[a] ? (p / step + 1) * step : end[a];
+			w.cuts[i].push_back(next - start[a]);
+			p = next;
+		}
+		bytes = perUnit * w.thickest(i);
 	}
-	if (axis < 0) return "";
-	const uint64_t a = (uint64_t)axes[axis], chunk = Zarr.get_chunks(a);
-	const uint64_t perUnit = bytes / w.size[axis];
-	const uint64_t rows = (minSlabBytes + perUnit * chunk - 1) / (perUnit * chunk);
-	const uint64_t step = chunk * (rows > 0 ? rows : 1);
-	w.cuts.push_back(0);
-	for (uint64_t p = start[a]; p < end[a];) {
-		const uint64_t next = (p / step + 1) * step < end[a] ? (p / step + 1) * step : end[a];
-		w.cuts.push_back(next - start[a]);
-		p = next;
-	}
-	if (w.cuts.size() > 2) w.slabAxis = axis;
-	else w.cuts.clear();
 	return "";
 }
 
-// Reads slab [s0, s1) of the window (all of it when the window is not cut)
-// into buf, missing chunks as the fill value, and fills its planes into
-// Java's, each element converted by conv. Returns why the read failed, or ""
-// (also when a Java exception is pending).
+// Seconds a read spends in its parts, for the timing line
+struct Times {
+	double lists = 0, reads = 0, fills = 0;
+};
+
+// Reads the piece [lo[i], hi[i]) of the window along z, c and t (the whole
+// window along x and y) into buf, missing chunks as the fill value, and fills
+// its planes into Java's, each element converted by conv. Returns why the
+// read failed, or "" (also when a Java exception is pending).
 template <typename S, typename D, typename Conv>
-std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, uint64_t s0, uint64_t s1, void* buf,
-                     const uint8_t* fillElem, jobjectArray dest, Conv conv)
+std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, const uint64_t* lo, const uint64_t* hi, void* buf,
+                     const uint8_t* fillElem, jobjectArray dest, Conv conv, Times& times)
 {
 	const size_t n = w.start.size();
 	std::vector<uint64_t> start = w.start, end = w.end, shape(n);
-	uint64_t lo[5] = { 0, 0, 0, 0, 0 }, hi[5];
-	for (int i = 0; i < 5; i++) hi[i] = w.size[i];
-	if (w.slabAxis >= 0) {
-		const jint a = w.axes[w.slabAxis];
-		start[a] = w.start[a] + s0;
-		end[a] = w.start[a] + s1;
-		lo[w.slabAxis] = s0;
-		hi[w.slabAxis] = s1;
+	for (int i = Z; i <= T; i++) {
+		if (w.axes[i] < 0) continue;
+		start[w.axes[i]] = w.start[w.axes[i]] + lo[i];
+		end[w.axes[i]] = w.start[w.axes[i]] + hi[i];
 	}
 	for (size_t d = 0; d < n; d++) shape[d] = end[d] - start[d];
+	const double t0 = now();
 	Zarr.set_chunkInfo(start, end);
-	if (parallelReadZarr(Zarr, buf, start, end, shape, sizeof(S) * 8, true, false, w.cOrder, fillElem)) {
+	const double t1 = now();
+	const bool failed = parallelReadZarr(Zarr, buf, start, end, shape, sizeof(S) * 8, true, false, w.cOrder, fillElem) != 0;
+	const double t2 = now();
+	times.lists += t1 - t0;
+	times.reads += t2 - t1;
+	if (failed) {
 		std::string why = Zarr.get_errString();
 		while (!why.empty() && why.back() == '\n') why.pop_back();
 		return why.empty() ? "Parallel Zarr read failed" : "Reading the Zarr failed: " + why;
@@ -164,7 +293,7 @@ std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, uint64_t s0, uint
 	else for (size_t d = 1; d < n; d++) stride[d] = stride[d - 1] * shape[d - 1];
 	uint64_t step[5];
 	for (int i = 0; i < 5; i++) step[i] = w.axes[i] >= 0 ? stride[w.axes[i]] : 0;
-	// The slab's planes: Java plane c + C*(z + Z*t), at its place in buf
+	// The piece's planes: Java plane c + C*(z + Z*t), at its place in buf
 	std::vector<uint64_t> idx, base;
 	for (uint64_t t = lo[T]; t < hi[T]; t++)
 		for (uint64_t z = lo[Z]; z < hi[Z]; z++)
@@ -174,8 +303,10 @@ std::string readSlab(JNIEnv* env, zarr& Zarr, const Window& w, uint64_t s0, uint
 			}
 	const pfv::PlaneLayout layout = { w.size[X], w.size[Y], step[X], step[Y], base.data() };
 	const S* src = (const S*)buf;
+	const double t3 = now();
 	pfv::fillJavaPlanes<D>(env, dest, w.size[X] * w.size[Y], idx.data(), idx.size(),
 		[&](D* const* dst, uint64_t k0, uint64_t count) { pfv::fillPlanes<S, D>(dst, k0, count, src, layout, conv); });
+	times.fills += now() - t3;
 	return "";
 }
 
@@ -200,26 +331,41 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 	const std::vector<uint64_t> end = toVector(env, jEnd);
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
 	if (fName == nullptr) return nullptr;
-	std::string problem;
+	const double began = now();
+	double planned = began;
+	Times times;
+	uint64_t reads = 0;
+	bool cOrder = false;
+	std::string problem, cuts;
 	void* buf = nullptr;
 	try {
 		zarr Zarr(fName);
 		Window w;
 		problem = plan(Zarr, start, end, axes, sizeof(S), w);
+		planned = now();
 		if (problem.empty() && (uint64_t)env->GetArrayLength(dest) != w.planes())
 			problem = "Destination planes do not match the image slice count";
 		if (problem.empty()) {
+			reads = w.reads();
+			cOrder = w.cOrder;
+			cuts = cutsOf(w);
 			uint8_t fillElem[16];
 			fillValueElement(Zarr.get_fill_value(), Zarr.get_dtype(), fillElem);
-			uint64_t thickest = 0;
-			for (size_t i = 0; i + 1 < w.cuts.size(); i++) thickest = std::max(thickest, w.cuts[i + 1] - w.cuts[i]);
-			const uint64_t slabPlanes = w.slabAxis >= 0 ? w.planes() / w.size[w.slabAxis] * thickest : w.planes();
-			buf = malloc(w.size[X] * w.size[Y] * slabPlanes * sizeof(S));
+			buf = malloc(w.size[X] * w.size[Y] * w.thickest(Z) * w.thickest(C) * w.thickest(T) * sizeof(S));
 			if (buf == nullptr) problem = "Out of native memory reading the Zarr";
-			const size_t slabs = w.slabAxis >= 0 ? w.cuts.size() - 1 : 1;
-			for (size_t i = 0; i < slabs && problem.empty() && !env->ExceptionCheck(); i++)
-				problem = readSlab<S, D>(env, Zarr, w, w.slabAxis >= 0 ? w.cuts[i] : 0, w.slabAxis >= 0 ? w.cuts[i + 1] : 0,
-					buf, fillElem, dest, conv);
+			// Every combination of one piece per axis, the slowest axis outermost
+			const std::vector<int> nest = w.nesting();
+			for (uint64_t r = 0; r < reads && problem.empty() && !env->ExceptionCheck(); r++) {
+				uint64_t lo[5] = { 0, 0, 0, 0, 0 }, hi[5] = { 0, 0, 0, 0, 0 }, rest = r;
+				for (size_t k = nest.size(); k-- > 0;) {
+					const int i = nest[k];
+					const uint64_t piece = rest % w.pieces(i);
+					rest /= w.pieces(i);
+					lo[i] = w.cuts[i][piece];
+					hi[i] = w.cuts[i][piece + 1];
+				}
+				problem = readSlab<S, D>(env, Zarr, w, lo, hi, buf, fillElem, dest, conv, times);
+			}
 		}
 	}
 	catch (const std::string& why) {
@@ -231,7 +377,13 @@ jobjectArray readToJava(JNIEnv* env, jstring fileName, jlongArray jStart, jlongA
 	catch (...) {
 		problem = "Parallel Zarr read failed";
 	}
+	const double freed = now();
 	free(buf);
+	if (timingWanted())
+		fprintf(stderr, "    [native zarr] open+plan %.3f s, %s slab(s) in %s order: chunk lists %.3f s, cpp-zarr reads %.3f s, "
+			"copies into Java planes %.3f s, free %.3f s, total %.3f s (threads %d)%s%s\n",
+			planned - began, std::to_string(reads).c_str(), cOrder ? "C" : "F", times.lists, times.reads, times.fills,
+			now() - freed, now() - began, omp_get_max_threads(), cuts.empty() ? "" : ", cut: ", cuts.c_str());
 	env->ReleaseStringUTFChars(fileName, fName);
 	if (env->ExceptionCheck()) return nullptr;
 	if (!problem.empty()) {
@@ -395,6 +547,28 @@ JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_setZarrSlabBytes
 	(JNIEnv*, jclass, jlong bytes)
 {
 	minSlabBytes = bytes > 0 ? (uint64_t)bytes : 1;
+}
+
+// For tests: how a read of the window [start, end) would be cut (see
+// describe), or why it cannot be done.
+JNIEXPORT jstring JNICALL Java_edu_abc_berkeley_ParallelReadNative_describeZarrRead
+	(JNIEnv* env, jclass, jstring fileName, jlongArray jStart, jlongArray jEnd, jintArray jAxes)
+{
+	if (jAxes == nullptr || env->GetArrayLength(jAxes) != 5) {
+		pfv::throwRuntime(env, "The axes of a Zarr read must be {x, y, z, c, t}");
+		return nullptr;
+	}
+	jint axes[5];
+	env->GetIntArrayRegion(jAxes, 0, 5, axes);
+	const std::vector<uint64_t> start = toVector(env, jStart);
+	const std::vector<uint64_t> end = toVector(env, jEnd);
+	jstring rval = nullptr;
+	withZarr(env, fileName, [&](zarr& Zarr) {
+		Window w;
+		const std::string problem = plan(Zarr, start, end, axes, Zarr.dtypeBytes(), w);
+		rval = env->NewStringUTF((problem.empty() ? describe(w) : problem).c_str());
+	});
+	return rval;
 }
 
 // Runs when Java loads this library; see primeUnwinder in jni_marshal.h.
