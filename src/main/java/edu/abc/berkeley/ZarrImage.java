@@ -189,6 +189,9 @@ public final class ZarrImage {
 	 * Reads the box [from, to) of the image, given along x, y, z, c and t (the
 	 * axes the image does not have are [0, 1)), as ImageJ pixel arrays in its
 	 * czt order: channel fastest, then z, then time.
+	 *
+	 * @throws OutOfMemoryError (HeapFit.DoesNotFit) when the heap cannot hold
+	 * them; the planes allocated by then have been dropped
 	 */
 	public Object[] read(long[] from, long[] to) {
 		long[] start = new long[shape.length], end = new long[shape.length];
@@ -200,24 +203,24 @@ public final class ZarrImage {
 		}
 		ParallelReadNative r = new ParallelReadNative();
 		long planes = ParallelReadNative.planes(start, end, axes), n = ParallelReadNative.planeElements(start, end, axes);
-		if (isFloat16()) return r.parallelReadZarrFLOAT16(path, start, end, axes, kind == 'h', ParallelReadNative.newFloatPlanes(planes, n));
+		if (isFloat16()) return r.parallelReadZarrFLOAT16(path, start, end, axes, kind == 'h', HeapFit.floatPlanes(planes, n));
 		switch (bits) {
 			case 8:
 				// Signed bytes are shifted to 0-255 (see calibrate); bool reads as 0 and 1
-				if (kind == 'i') return r.parallelReadZarrINT8(path, start, end, axes, ParallelReadNative.newBytePlanes(planes, n));
-				return r.parallelReadZarrUINT8(path, start, end, axes, ParallelReadNative.newBytePlanes(planes, n));
+				if (kind == 'i') return r.parallelReadZarrINT8(path, start, end, axes, HeapFit.bytePlanes(planes, n));
+				return r.parallelReadZarrUINT8(path, start, end, axes, HeapFit.bytePlanes(planes, n));
 			case 16:
-				if (kind == 'i') return r.parallelReadZarrINT16(path, start, end, axes, ParallelReadNative.newShortPlanes(planes, n));
-				return r.parallelReadZarrUINT16(path, start, end, axes, ParallelReadNative.newShortPlanes(planes, n));
+				if (kind == 'i') return r.parallelReadZarrINT16(path, start, end, axes, HeapFit.shortPlanes(planes, n));
+				return r.parallelReadZarrUINT16(path, start, end, axes, HeapFit.shortPlanes(planes, n));
 			case 32:
-				if (kind == 'i') return r.parallelReadZarrINT32(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
-				if (kind == 'u') return r.parallelReadZarrUINT32(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
-				return r.parallelReadZarrFLOAT(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
+				if (kind == 'i') return r.parallelReadZarrINT32(path, start, end, axes, HeapFit.floatPlanes(planes, n));
+				if (kind == 'u') return r.parallelReadZarrUINT32(path, start, end, axes, HeapFit.floatPlanes(planes, n));
+				return r.parallelReadZarrFLOAT(path, start, end, axes, HeapFit.floatPlanes(planes, n));
 			case 64:
 				// ImageJ has no double or 64-bit integer type: all become float
-				if (kind == 'i') return r.parallelReadZarrINT64(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
-				if (kind == 'u') return r.parallelReadZarrUINT64(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
-				return r.parallelReadZarrDOUBLE(path, start, end, axes, ParallelReadNative.newFloatPlanes(planes, n));
+				if (kind == 'i') return r.parallelReadZarrINT64(path, start, end, axes, HeapFit.floatPlanes(planes, n));
+				if (kind == 'u') return r.parallelReadZarrUINT64(path, start, end, axes, HeapFit.floatPlanes(planes, n));
+				return r.parallelReadZarrDOUBLE(path, start, end, axes, HeapFit.floatPlanes(planes, n));
 			default:
 				throw new IllegalArgumentException(title + " has a data type the plugin cannot show: " + dtype);
 		}

@@ -19,7 +19,6 @@ import ij.gui.GenericDialog;
 import ij.io.FileInfo;
 import ij.io.Opener;
 import ij.measure.Calibration;
-import ij.plugin.Memory;
 import ij.process.ImageProcessor;
 import ij.io.FileOpener;
 
@@ -61,10 +60,36 @@ public class PRT {
 		}
 
 		int planes = (int)tiff.planes();
-		long bytesPerPixel = tiff.isRgb() ? 4 : Math.min(tiff.bits, 32) / 8;
 		// -Dpfv.forceVirtual=true opens every image as a virtual stack (how the tests reach it with small files)
-		boolean isVirtual = Boolean.getBoolean("pfv.forceVirtual") || (long)tiff.width*tiff.height*planes*bytesPerPixel > new Memory().maxMemory();
-		Object[] pixels = isVirtual ? null : tiff.read(0, planes, "Reading "+f.getName());
+		boolean forced = Boolean.getBoolean("pfv.forceVirtual");
+		// The heap for the planes, claimed until the image is shown (ImageJ
+		// counts it then): files opened at once count each other's
+		HeapFit.Claim heap = forced ? null : HeapFit.claim(planes, tiff.bytesPerPlane());
+		try {
+			Object[] pixels = null;
+			if(heap != null) {
+				try {
+					pixels = tiff.read(0, planes, "Reading "+f.getName());
+				}
+				catch(HeapFit.DoesNotFit e) {
+					// The heap ran short after all (memory in use the plugin
+					// cannot see): the planes are dropped, and it opens virtual
+					heap.release();
+				}
+			}
+			if(pixels == null && !forced) IJ.log(HeapFit.virtualMessage(f.getName(), planes, tiff.bytesPerPlane(), heap != null));
+			ImagePlus imp = image(f, tiff, imageJInfo, pixels);
+			this.imp = imp;
+			if(showImage) imp.show();
+		}
+		finally {
+			if(heap != null) heap.release();
+		}
+	}
+
+	/** The image of tiff: its planes pixels, or a virtual stack when they are null. */
+	private ImagePlus image(File f, TiffImage tiff, FutureTask<FileInfo[]> imageJInfo, Object[] pixels) {
+		boolean isVirtual = pixels == null;
 		FileInfo fi = imageJInfo != null ? firstInfo(imageJInfo) : null;
 		FileOpener fo = new FileOpener(null);
 		ColorModel cm = fi != null ? fo.createColorModel(fi) : null;
@@ -128,9 +153,7 @@ public class PRT {
 			if(samplesAsChannels && tiff.channels() <= CompositeImage.MAX_CHANNELS) imp = new CompositeImage(imp, IJ.COMPOSITE);
 			else if(fi != null) imp = makeComposite(imp, fi);
 		}
-		
-		this.imp = imp;
-		if(showImage) imp.show();
+		return imp;
 	}
 	
 	public PRT(String fileName){

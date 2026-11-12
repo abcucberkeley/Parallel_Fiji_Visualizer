@@ -2,12 +2,12 @@ package edu.abc.berkeley;
 
 import java.io.File;
 
+import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
 import ij.ParallelVirtualStack;
 import ij.io.FileInfo;
 import ij.plugin.HyperStackConverter;
-import ij.plugin.Memory;
 
 /**
  * Opens a Zarr array, or an OME-Zarr image, as an ImageJ image: a hyperstack
@@ -35,15 +35,41 @@ public class PRZ {
 
 		// ImageJ shows at most 32 bits per pixel: wider types become float
 		int tBits = zarr.displayBits();
-		long memNeeded = w*h*d*c*t*(Math.max(zarr.bits, tBits)/8);
+		long planeCount = d*c*t, bytesPerPlane = w*h*(tBits/8);
 		// -Dpfv.forceVirtual=true opens every image as a virtual stack (how the tests reach it with small files)
-		boolean isVirtual = Boolean.getBoolean("pfv.forceVirtual") || memNeeded > new Memory().maxMemory();
+		boolean forced = Boolean.getBoolean("pfv.forceVirtual");
+		// The heap for the planes, claimed until the image is shown (ImageJ
+		// counts it then): files opened at once count each other's
+		HeapFit.Claim heap = forced ? null : HeapFit.claim(planeCount, bytesPerPlane);
+		try {
+			Object[] planes = null;
+			if(heap != null) {
+				try {
+					planes = zarr.read(new long[] { x0, y0, z0, 0, 0 }, new long[] { x1, y1, z1, c, t }, "Reading "+f.getName());
+				}
+				catch(HeapFit.DoesNotFit e) {
+					// The heap ran short after all (memory in use the plugin
+					// cannot see): the planes are dropped, and it opens virtual
+					heap.release();
+				}
+			}
+			if(planes == null && !forced) IJ.log(HeapFit.virtualMessage(zarr.title, planeCount, bytesPerPlane, heap != null));
+			ImagePlus imp = image(f, zarr, x0, y0, z0, w, h, d, planes);
+			this.imp = imp;
+			if(showImage) imp.show();
+		}
+		finally {
+			if(heap != null) heap.release();
+		}
+	}
 
+	/** The window's image: its planes, or a virtual stack when they are null. */
+	private static ImagePlus image(File f, ZarrImage zarr, long x0, long y0, long z0, long w, long h, long d, Object[] planes) {
+		long c = zarr.channels(), t = zarr.frames();
 		ImagePlus imp;
-		if(!isVirtual) {
-			Object[] planes = zarr.read(new long[] { x0, y0, z0, 0, 0 }, new long[] { x1, y1, z1, c, t }, "Reading "+f.getName());
+		if(planes != null) {
 			ImageStack stack = new ImageStack((int)w, (int)h);
-			stack.setBitDepth(tBits);
+			stack.setBitDepth(zarr.displayBits());
 			for(Object plane : planes) stack.addSlice(null, plane);
 			imp = new ImagePlus(zarr.title, stack);
 			// The planes are in ImageJ's czt order
@@ -65,8 +91,7 @@ public class PRZ {
 			}
 		}
 		zarr.calibrate(imp);
-		this.imp = imp;
-		if(showImage) imp.show();
+		return imp;
 	}
 
 	// Open the entire image

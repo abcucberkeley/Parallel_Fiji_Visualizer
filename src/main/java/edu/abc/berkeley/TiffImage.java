@@ -41,7 +41,12 @@ public final class TiffImage {
 		TiffReadAhead ahead = TiffReadAhead.arm(path);
 		try {
 			TiffImage tiff = new TiffImage(path);
-			if (ahead != null && ahead.described(tiff.planeBytes(), tiff.storedBytes())) tiff.readAhead.set(ahead);
+			if (ahead != null) {
+				// An image whose planes do not fit in the heap opens as a virtual
+				// stack (PRT decides by the same rule), which reads only what is shown
+				if (HeapFit.fits(tiff.planes(), tiff.bytesPerPlane()) && ahead.described(tiff.planeBytes(), tiff.storedBytes())) tiff.readAhead.set(ahead);
+				else ahead.close();
+			}
 			return tiff;
 		}
 		catch (RuntimeException | Error e) {
@@ -94,9 +99,14 @@ public final class TiffImage {
 		return sampleFormat == 2 && bits <= 16;
 	}
 
-	/** The bytes of the image's planes, as PRT counts them to decide whether they fit in memory. */
+	/** The bytes of one of the image's planes: 4 per pixel for color, else a sample's, up to 4 (float). */
+	long bytesPerPlane() {
+		return (long) width * height * (isRgb() ? 4 : Math.min(bits, 32) / 8);
+	}
+
+	/** The bytes of the image's planes (whether they fit in the heap PRT decides by {@link HeapFit}). */
 	long planeBytes() {
-		return (long) width * height * planes() * (isRgb() ? 4 : Math.min(bits, 32) / 8);
+		return planes() * bytesPerPlane();
 	}
 
 	/** The bytes of the slices as stored: cpp-tiff's buffer, which a read holds beside the planes. */
@@ -104,7 +114,12 @@ public final class TiffImage {
 		return (long) width * height * slices * samples * (bits / 8);
 	}
 
-	/** ImageJ planes [first, last), as pixel arrays. */
+	/**
+	 * ImageJ planes [first, last), as pixel arrays.
+	 *
+	 * @throws OutOfMemoryError (HeapFit.DoesNotFit) when the heap cannot hold
+	 * them; the planes allocated by then have been dropped
+	 */
 	public Object[] read(long first, long last) {
 		TiffReadAhead ahead = readAhead.get();
 		if (ahead != null) ahead.reading();
@@ -140,24 +155,24 @@ public final class TiffImage {
 	private Object[] readSlices(long z0, long z1) {
 		ParallelReadNative r = new ParallelReadNative();
 		long n = (long) width * height, planes = (z1 - z0) * channels();
-		if (isRgb()) return r.parallelReadTiffRGB8(path, info, z0, z1, ParallelReadNative.newIntPlanes(planes, n));
+		if (isRgb()) return r.parallelReadTiffRGB8(path, info, z0, z1, HeapFit.intPlanes(planes, n));
 		switch (bits) {
 			case 8:
 				// Signed bytes are shifted to 0-255; a calibration maps them back
-				if (sampleFormat == 2) return r.parallelReadTiffINT8(path, info, z0, z1, ParallelReadNative.newBytePlanes(planes, n));
-				return r.parallelReadTiffUINT8(path, info, z0, z1, ParallelReadNative.newBytePlanes(planes, n));
+				if (sampleFormat == 2) return r.parallelReadTiffINT8(path, info, z0, z1, HeapFit.bytePlanes(planes, n));
+				return r.parallelReadTiffUINT8(path, info, z0, z1, HeapFit.bytePlanes(planes, n));
 			case 16:
-				if (sampleFormat == 2) return r.parallelReadTiffINT16(path, info, z0, z1, ParallelReadNative.newShortPlanes(planes, n));
-				return r.parallelReadTiffUINT16(path, info, z0, z1, ParallelReadNative.newShortPlanes(planes, n));
+				if (sampleFormat == 2) return r.parallelReadTiffINT16(path, info, z0, z1, HeapFit.shortPlanes(planes, n));
+				return r.parallelReadTiffUINT16(path, info, z0, z1, HeapFit.shortPlanes(planes, n));
 			case 32:
-				if (sampleFormat == 2) return r.parallelReadTiffINT32(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
-				if (sampleFormat == 1) return r.parallelReadTiffUINT32(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
-				return r.parallelReadTiffFLOAT(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
+				if (sampleFormat == 2) return r.parallelReadTiffINT32(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
+				if (sampleFormat == 1) return r.parallelReadTiffUINT32(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
+				return r.parallelReadTiffFLOAT(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
 			default:
 				// ImageJ has no double or 64-bit integer type; all become float
-				if (sampleFormat == 2) return r.parallelReadTiffINT64(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
-				if (sampleFormat == 1) return r.parallelReadTiffUINT64(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
-				return r.parallelReadTiffDOUBLE(path, info, z0, z1, ParallelReadNative.newFloatPlanes(planes, n));
+				if (sampleFormat == 2) return r.parallelReadTiffINT64(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
+				if (sampleFormat == 1) return r.parallelReadTiffUINT64(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
+				return r.parallelReadTiffDOUBLE(path, info, z0, z1, HeapFit.floatPlanes(planes, n));
 		}
 	}
 }
