@@ -91,7 +91,8 @@ public class VirtualStackReadAheadTest {
 
 				@Override
 				protected long freeHeapBytes() {
-					return heapShort ? 0 : super.freeHeapBytes();
+					// The heap as the test sets it, not as earlier tests left it
+					return heapShort ? 0 : Long.MAX_VALUE / 4;
 				}
 			};
 		}
@@ -105,7 +106,8 @@ public class VirtualStackReadAheadTest {
 
 				@Override
 				protected long freeHeapBytes() {
-					return heapShort ? 0 : super.freeHeapBytes();
+					// The heap as the test sets it, not as earlier tests left it
+					return heapShort ? 0 : Long.MAX_VALUE / 4;
 				}
 			};
 		}
