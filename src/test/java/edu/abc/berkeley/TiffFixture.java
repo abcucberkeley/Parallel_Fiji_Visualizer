@@ -222,6 +222,30 @@ final class TiffFixture {
 
 	/** Writes the image l describes, its samples interleaved, uncompressed. */
 	static File write(File f, Layout l) throws IOException {
+		final byte[] directories = directories(l);
+		final long total = directories.length + l.slices * l.sliceBytes();
+		if (total > Integer.MAX_VALUE) throw new IllegalArgumentException("too large for a test image: " + l);
+		ByteBuffer b = ByteBuffer.allocate((int) total).order(l.order);
+		b.put(directories);
+		for (int z = 0; z < l.slices; z++)
+			for (int p = 0; p < l.width * l.height; p++)
+				for (int s = 0; s < l.samples; s++) {
+					final long v = stored(l, z, s, p);
+					if (l.bits == 8) b.put((byte) v);
+					else if (l.bits == 16) b.putShort((short) v);
+					else if (l.bits == 32) b.putInt((int) v);
+					else b.putLong(v);
+				}
+		Files.write(f.toPath(), b.array());
+		return f;
+	}
+
+	/**
+	 * The header and directories of the image l describes: the file's bytes
+	 * up to its first slice, which starts right after them (so a test can
+	 * write the slices itself, a few of them in a sparse file).
+	 */
+	static byte[] directories(Layout l) {
 		final boolean big = l.bigTiff;
 		final int rows = l.rowsPerStrip > 0 ? Math.min(l.rowsPerStrip, l.height) : l.height;
 		final int strips = (l.height + rows - 1) / rows;
@@ -253,9 +277,7 @@ final class TiffFixture {
 			if (e.bytes() > inline) extra += e.bytes() + (e.bytes() & 1);
 		final long ifdBytes = countBytes + entries.size() * (long) entryBytes + inline + extra;
 		final long header = big ? 16 : 8, dataStart = header + ifds * ifdBytes;
-		final long total = dataStart + l.slices * l.sliceBytes();
-		if (total > Integer.MAX_VALUE) throw new IllegalArgumentException("too large for a test image: " + l);
-		ByteBuffer b = ByteBuffer.allocate((int) total).order(l.order);
+		ByteBuffer b = ByteBuffer.allocate((int) dataStart).order(l.order);
 		final byte order = (byte) (l.order == ByteOrder.BIG_ENDIAN ? 'M' : 'I');
 		b.put(order).put(order);
 		if (big) b.putShort((short) 43).putShort((short) 8).putShort((short) 0).putLong(header);
@@ -287,18 +309,7 @@ final class TiffFixture {
 			if (big) b.putLong(next);
 			else b.putInt((int) next);
 		}
-		b.position((int) dataStart);
-		for (int z = 0; z < l.slices; z++)
-			for (int p = 0; p < l.width * l.height; p++)
-				for (int s = 0; s < l.samples; s++) {
-					final long v = stored(l, z, s, p);
-					if (l.bits == 8) b.put((byte) v);
-					else if (l.bits == 16) b.putShort((short) v);
-					else if (l.bits == 32) b.putInt((int) v);
-					else b.putLong(v);
-				}
-		Files.write(f.toPath(), b.array());
-		return f;
+		return b.array();
 	}
 
 	/** A directory entry: its tag, type (2 ASCII, 3 SHORT, 4 LONG, 16 LONG8) and values. */
