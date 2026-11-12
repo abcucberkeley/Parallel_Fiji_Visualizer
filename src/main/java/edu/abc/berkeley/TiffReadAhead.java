@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>
  * It begins 150 ms after the open starts, unless the image has been read by
  * then, and only where it helps and is safe: the file has at least 256 MB
- * (smaller ones are walked and read before it would matter); some of it is
+ * (smaller ones are walked and read before it would matter); most of it is
  * not in the page cache; the page cache can hold it beside what the image
  * adds to the memory; and the image is read whole, not as a virtual stack
  * (which reads only what is shown) and not by a folder's readers (which read
@@ -54,12 +54,17 @@ final class TiffReadAhead implements AutoCloseable {
 	private static final long CLOSE_MILLIS = 2000;
 	private static final int PIECE = 4 << 20;
 	/**
-	 * 4 KB reads spread over the file: microseconds from the page cache (1-25
-	 * us measured), 0.1 ms or more from any storage (0.25-5 ms from network
-	 * storage).
+	 * The cold check reads 4 KB at places spread over the file: microseconds
+	 * from the page cache (1-25 us measured), 0.1 ms or more from any storage
+	 * (0.25-5 ms from network storage). A read is slow when it takes 10 times
+	 * as long as rereads of a page in the cache, and at least 50 us. Two
+	 * passes of 8 reads, each at other places, must both find most reads
+	 * slow: a thread held up now and then (a busy machine, a collection)
+	 * slows a few reads, not most of 16, and a machine whose cache reads are
+	 * slow raises the bar.
 	 */
-	private static final int SAMPLES = 8;
-	private static final long SLOW_NANOS = 50_000L;
+	private static final int SAMPLES = 8, REREADS = 5, SLOWER = 10;
+	private static final long MIN_SLOW_NANOS = 50_000L;
 	private static final boolean TIMING = System.getenv("PFV_TIMING") != null;
 
 	// For tests: the smallest file, the delay, the cold check's answer (null:
@@ -251,30 +256,68 @@ final class TiffReadAhead implements AutoCloseable {
 		return Math.max(1, Math.min(24, Runtime.getRuntime().availableProcessors() / 2));
 	}
 
-	/**
-	 * Whether some of the file is not in the page cache: at least 2 of the
-	 * sample reads take long. The first read, of the start the walk has read,
-	 * only gets the code of the reads loaded.
-	 */
+	/** Whether most of the file is not in the page cache, by the cold check's reads (see SAMPLES). */
 	private boolean cold() throws IOException {
 		try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
-			ByteBuffer b = ByteBuffer.allocateDirect(4096);
-			ch.read(b, 0);
-			int slow = 0;
-			long fastest = Long.MAX_VALUE, slowest = 0;
-			for (int i = 0; i < SAMPLES; i++) {
-				b.clear();
-				long at = (length / SAMPLES * i + length / SAMPLES / 2) & ~4095L;
-				long t0 = System.nanoTime();
-				ch.read(b, at);
-				long t = System.nanoTime() - t0;
-				if (t > SLOW_NANOS) slow++;
-				fastest = Math.min(fastest, t);
-				slowest = Math.max(slowest, t);
+			long[][] t = sampleReads(ch, length);
+			if (TIMING) {
+				long slow = slowNanos(t[0]), fastest = Long.MAX_VALUE, slowest = 0;
+				for (int k = 1; k < 3; k++)
+					for (long x : t[k]) {
+						fastest = Math.min(fastest, x);
+						slowest = Math.max(slowest, x);
+					}
+				check = String.format("%d and %d of %d reads slower than %.0f us, %.0f-%.0f us", slowReads(t[1], slow), slowReads(t[2], slow),
+					SAMPLES, slow / 1e3, fastest / 1e3, slowest / 1e3);
 			}
-			if (TIMING) check = String.format("%d of %d reads slow, %.0f-%.0f us", slow, SAMPLES, fastest / 1e3, slowest / 1e3);
-			return slow >= 2;
+			return judgedCold(t[0], t[1], t[2]);
 		}
+	}
+
+	/**
+	 * The cold check's reads, in nanoseconds: rereads of the file's first page
+	 * (which the walk has read; read once more here first, untimed, so that
+	 * the code of the reads is loaded), then two passes of reads spread over
+	 * the file, the second between the places of the first.
+	 */
+	static long[][] sampleReads(FileChannel ch, long length) throws IOException {
+		ByteBuffer b = ByteBuffer.allocateDirect(4096);
+		timedRead(ch, b, 0);
+		long[] cached = new long[REREADS], first = new long[SAMPLES], second = new long[SAMPLES];
+		for (int i = 0; i < REREADS; i++) cached[i] = timedRead(ch, b, 0);
+		for (int i = 0; i < SAMPLES; i++) first[i] = timedRead(ch, b, (length / SAMPLES * i + length / SAMPLES / 2) & ~4095L);
+		for (int i = 0; i < SAMPLES; i++) second[i] = timedRead(ch, b, (length / SAMPLES * i + length / SAMPLES / 4) & ~4095L);
+		return new long[][] { cached, first, second };
+	}
+
+	private static long timedRead(FileChannel ch, ByteBuffer b, long at) throws IOException {
+		b.clear();
+		long t0 = System.nanoTime();
+		ch.read(b, at);
+		return System.nanoTime() - t0;
+	}
+
+	/**
+	 * The cold check's verdict on the times of its reads (see SAMPLES): the
+	 * rereads of a cached page, and the two passes.
+	 */
+	static boolean judgedCold(long[] cached, long[] first, long[] second) {
+		long slow = slowNanos(cached);
+		return 2 * slowReads(first, slow) > first.length && 2 * slowReads(second, slow) > second.length;
+	}
+
+	/** The time above which a read did not come from the page cache: 10 times the median reread, at least 50 us. */
+	static long slowNanos(long[] cached) {
+		long[] c = cached.clone();
+		Arrays.sort(c);
+		return Math.max(MIN_SLOW_NANOS, SLOWER * c[c.length / 2]);
+	}
+
+	private static int slowReads(long[] nanos, long slow) {
+		int n = 0;
+		for (long t : nanos)
+			if (t > slow) n++;
+		return n;
 	}
 
 	private void readQuietly(int k, int n) {

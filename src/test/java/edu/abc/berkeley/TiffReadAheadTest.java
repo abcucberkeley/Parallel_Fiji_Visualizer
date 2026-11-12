@@ -10,7 +10,9 @@ import static org.junit.Assert.fail;
 
 import java.io.File;
 import java.io.RandomAccessFile;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BooleanSupplier;
@@ -299,15 +301,74 @@ public class TiffReadAheadTest {
 		assertNull("armed for a small file", TiffReadAhead.arm(path));
 		TiffReadAhead.minBytes = 0;
 
-		// A file in the page cache is armed for, but not read
-		Files.readAllBytes(new File(path).toPath());
-		TiffReadAhead.coldForTests = null;
+		// A file the cold check finds in the page cache is armed for, but not
+		// read (the check's verdicts on read times are tested on their own)
+		TiffReadAhead.coldForTests = Boolean.FALSE;
 		int before = TiffReadAhead.begun.get();
 		ahead = TiffReadAhead.arm(path);
 		assertNotNull("not armed", ahead);
 		await("cold check done", () -> threads().isEmpty());
 		assertEquals("read ahead a file in the page cache", before, TiffReadAhead.begun.get());
 		ahead.close();
+	}
+
+	private static long[] micros(long... us) {
+		long[] ns = new long[us.length];
+		for (int i = 0; i < us.length; i++) ns[i] = us[i] * 1000;
+		return ns;
+	}
+
+	/**
+	 * The cold check's verdicts on read times (us): the rereads of a cached
+	 * page, then two passes of 8 reads spread over the file.
+	 */
+	@Test
+	public void coldCheckVerdicts() {
+		long[] fast = micros(2, 2, 3, 2, 2);
+		// In the page cache
+		assertFalse("cached", TiffReadAhead.judgedCold(fast, micros(2, 3, 2, 4, 2, 3, 2, 2), micros(3, 2, 2, 2, 5, 2, 2, 3)));
+		// ... with the thread held up now and then: up to half of a pass slow, or one pass all slow
+		assertFalse("cached, held up", TiffReadAhead.judgedCold(fast, micros(2, 900, 3, 70, 2, 3000, 60, 2), micros(3, 2, 400, 2, 5, 80, 2000, 3)));
+		assertFalse("cached, one pass held up", TiffReadAhead.judgedCold(fast, micros(90, 80, 300, 70, 60, 3000, 60, 120), micros(3, 2, 2, 2, 500, 2, 2, 3)));
+		assertFalse("cached, one reread held up", TiffReadAhead.judgedCold(micros(2, 3, 2500, 2, 2), micros(2, 3, 2, 4, 2, 3, 2, 2), micros(3, 2, 2, 2, 5, 2, 2, 3)));
+		// ... on a busy machine whose cache reads take tens of us: the bar rises
+		long[] busy = micros(20, 25, 18, 30, 22);
+		assertFalse("cached, busy machine", TiffReadAhead.judgedCold(busy, micros(40, 60, 180, 55, 25, 90, 70, 150), micros(60, 120, 35, 80, 200, 75, 66, 51)));
+		// From network storage (0.25-5 ms) and a local SSD (0.1 ms)
+		assertTrue("network storage", TiffReadAhead.judgedCold(fast, micros(1100, 860, 2400, 900, 1400, 5000, 1300, 950), micros(700, 1200, 250, 1800, 990, 1600, 1050, 1200)));
+		assertTrue("network storage, busy machine", TiffReadAhead.judgedCold(micros(15, 12, 18, 14, 16), micros(1100, 860, 2400, 900, 1400, 5000, 1300, 220), micros(700, 1200, 250, 1800, 990, 1600, 1050, 1200)));
+		assertTrue("local SSD", TiffReadAhead.judgedCold(fast, micros(85, 90, 110, 80, 95, 120, 88, 92), micros(81, 99, 105, 87, 90, 84, 130, 95)));
+		// ... with a few places cached already (the walk reads some): still cold
+		assertTrue("network storage, some cached", TiffReadAhead.judgedCold(fast, micros(1100, 3, 2400, 900, 2, 5000, 1300, 950), micros(700, 1200, 2, 1800, 990, 4, 1050, 1200)));
+		// Mostly cached: as warm (the open reads the rest itself)
+		assertFalse("mostly cached", TiffReadAhead.judgedCold(fast, micros(1100, 3, 2, 900, 2, 3, 1300, 2), micros(2, 1200, 2, 3, 990, 4, 2, 1200)));
+		// The bar: 10 times the median reread, at least 50 us
+		assertEquals(50_000, TiffReadAhead.slowNanos(fast));
+		assertEquals(220_000, TiffReadAhead.slowNanos(busy));
+		assertEquals(50_000, TiffReadAhead.slowNanos(micros(2, 3, 2500, 2, 2)));
+	}
+
+	/**
+	 * The check's real reads of a file in the page cache. On a busy machine any
+	 * one check may be held up, so it must find the file in the cache in one
+	 * of a few tries (most find it every time).
+	 */
+	@Test
+	public void coldCheckFindsACachedFile() throws Exception {
+		String path = cppTiffStack("cached.tif", 8);
+		Files.readAllBytes(new File(path).toPath());
+		long length = new File(path).length();
+		int warm = 0;
+		try (FileChannel ch = FileChannel.open(new File(path).toPath(), StandardOpenOption.READ)) {
+			for (int i = 0; i < 5; i++) {
+				long[][] t = TiffReadAhead.sampleReads(ch, length);
+				assertEquals("rereads", 5, t[0].length);
+				assertEquals("first pass", 8, t[1].length);
+				assertEquals("second pass", 8, t[2].length);
+				if (!TiffReadAhead.judgedCold(t[0], t[1], t[2])) warm++;
+			}
+		}
+		assertTrue("a file in the page cache was judged cold in 5 of 5 tries", warm > 0);
 	}
 
 	/** The rules by numbers: what the file and its image take, what the system can give, the heap. */
