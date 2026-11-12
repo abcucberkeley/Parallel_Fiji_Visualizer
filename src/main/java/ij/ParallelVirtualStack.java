@@ -13,8 +13,14 @@ import java.util.Properties;
 import edu.abc.berkeley.TiffImage;
 import edu.abc.berkeley.ZarrImage;
 
-/** This class represents an array of disk-resident images. */
-public class ParallelVirtualStack extends ImageStack {
+/**
+ * The planes of a Zarr or TIFF image too large for memory, read as they are
+ * shown. An ImageJ VirtualStack, so that ImageJ's own commands (Save As Tiff,
+ * Duplicate, Substack) treat it as one. Every public method of VirtualStack
+ * is overridden, as VirtualStack's own fields describe a folder of files and
+ * stay empty here; so must be any that a later ImageJ adds.
+ */
+public class ParallelVirtualStack extends VirtualStack {
 	private static final int INITIAL_SIZE = 100;
 	private String path;
 	private int nSlices;
@@ -24,6 +30,7 @@ public class ParallelVirtualStack extends ImageStack {
 	private Properties  properties;
 	private boolean generateData;
 	private int[] indexes;  // used to translate non-CZT hyperstack slice numbers
+	private int[] planeOfSlice;  // once slices are deleted: the image's plane (1-based) each slice shows
 	private int width;
 	private int height;
 
@@ -143,7 +150,8 @@ public class ParallelVirtualStack extends ImageStack {
 	 * @see <a href="http://wsr.imagej.net/macros/js/OpenAsVirtualStack.js">OpenAsVirtualStack.js</a>
 	*/
 	public ParallelVirtualStack(int width, int height, ColorModel cm, String path) {
-		super(width, height, cm);
+		super(width, height);
+		setColorModel(cm);
 		path = IJ.addSeparator(path);
 		this.path = path;
 		names = new String[INITIAL_SIZE];
@@ -164,7 +172,7 @@ public class ParallelVirtualStack extends ImageStack {
 	 * in ImageJ's czt order.
 	 */
 	public ParallelVirtualStack(ZarrImage zarr, long x0, long y0, long z0, int width, int height, int depth) {
-		super(width, height, null);
+		super(width, height);
 		this.zarr = zarr;
 		this.x0 = x0;
 		this.y0 = y0;
@@ -186,7 +194,7 @@ public class ParallelVirtualStack extends ImageStack {
 	 * czt order; for several samples per pixel, a slice's samples together).
 	 */
 	public ParallelVirtualStack(TiffImage tiff) {
-		super(tiff.width, tiff.height, null);
+		super(tiff.width, tiff.height);
 		this.tiff = tiff;
 		this.width = tiff.width;
 		this.height = tiff.height;
@@ -213,7 +221,7 @@ public class ParallelVirtualStack extends ImageStack {
 	}
 
 	public ParallelVirtualStack(int width, int height, int slices, String options) {
-		super(width, height, null);
+		super(width, height);
 		nSlices = slices;
 		int depth = 8;
   		if (options.contains("16-bit")) depth=16;
@@ -223,15 +231,22 @@ public class ParallelVirtualStack extends ImageStack {
 		this.bitDepth = depth;
 	}
 
+	/** Whether the planes come from an image (a Zarr or a TIFF) rather than from files or nothing. */
+	private boolean hasImage() {
+		return zarr != null || tiff != null;
+	}
+
 	/** Adds an image to the end of the stack. The argument 
 	 * can be a full file path (e.g., "C:/Users/wayne/dir1/image.tif")
 	 * if the 'path' argument in the constructor is "". File names
-	 * that start with '.' are ignored.
+	 * that start with '.' are ignored. Does nothing when the planes
+	 * come from an image.
 	*/
+	@Override
 	public void addSlice(String fileName) {
 		if (fileName==null) 
 			throw new IllegalArgumentException("'fileName' is null!");
-		if (fileName.startsWith("."))
+		if (fileName.startsWith(".") || hasImage())
 			return;
 		nSlices++;
 	   if (nSlices==names.length) {
@@ -246,30 +261,52 @@ public class ParallelVirtualStack extends ImageStack {
 	}
 
    /** Does nothing. */
+	@Override
 	public void addSlice(String sliceLabel, Object pixels) {
 	}
 
 	/** Does nothing.. */
+	@Override
 	public void addSlice(String sliceLabel, ImageProcessor ip) {
 	}
 	
 	/** Does noting. */
+	@Override
 	public void addSlice(String sliceLabel, ImageProcessor ip, int n) {
 	}
 
-	/** Deletes the specified slice, were 1<=n<=nslices. */
+	/**
+	 * Deletes the specified slice, were 1<=n<=nslices, from the stack
+	 * only (the file is not changed): the slices after it move up with
+	 * their planes. ImageJ's Delete Slice and Make Substack delete through
+	 * here, and its hyperstack delete then checks that the stack shrank.
+	 */
+	@Override
 	public void deleteSlice(int n) {
-		if (n<1 || n>nSlices)
-			throw new IllegalArgumentException("Argument out of range: "+n);
 		if (nSlices<1)
 			return;
-		for (int i=n; i<nSlices; i++)
-			names[i-1] = names[i];
-		names[nSlices-1] = null;
+		if (n<1 || n>nSlices)
+			throw new IllegalArgumentException("Argument out of range: "+n);
+		if (hasImage()) {
+			if (planeOfSlice == null) {
+				planeOfSlice = new int[nSlices];
+				for (int i=0; i<nSlices; i++) planeOfSlice[i] = i+1;
+			}
+			System.arraycopy(planeOfSlice, n, planeOfSlice, n-1, nSlices-n);
+		}
+		if (names!=null) {
+			for (int i=n; i<nSlices; i++) {
+				names[i-1] = names[i];
+				labels[i-1] = labels[i];
+			}
+			names[nSlices-1] = null;
+			labels[nSlices-1] = null;
+		}
 		nSlices--;
 	}
 	
 	/** Deletes the last slice in the stack. */
+	@Override
 	public void deleteLastSlice() {
 		int n = size();
 		if (n>0)
@@ -277,6 +314,7 @@ public class ParallelVirtualStack extends ImageStack {
 	}
 	   
    /** Returns the pixel array for the specified slice, were 1<=n<=nslices. */
+	@Override
 	public Object getPixels(int n) {
 		ImageProcessor ip = getProcessor(n);
 		if (ip!=null)
@@ -287,12 +325,14 @@ public class ParallelVirtualStack extends ImageStack {
 	
 	 /** Assigns a pixel array to the specified slice,
 		were 1<=n<=nslices. */
+	@Override
 	public void setPixels(Object pixels, int n) {
 	}
 
    /** Returns an ImageProcessor for the specified slice,
 		were 1<=n<=nslices. Returns null if the stack is empty.
 	*/
+	@Override
 	public ImageProcessor getProcessor(int n) {
 		if (path==null) {  //Help>Examples?JavaScript>Terabyte VirtualStack
 			ImageProcessor ip = null;
@@ -319,6 +359,7 @@ public class ParallelVirtualStack extends ImageStack {
 			return ip;
 		}
 		n = translate(n);  // update n for hyperstacks not in the default CZT order
+		if (planeOfSlice != null) n = planeOfSlice[n-1];
 		Object pixels;
 		synchronized (this) {
 			pixels = pixelsOf(n);
@@ -343,20 +384,24 @@ public class ParallelVirtualStack extends ImageStack {
 	}
  
 	/** Currently not implemented */
+	@Override
 	public int saveChanges(int n) {
 		return -1;
 	}
 	
 	/** Returns the number of slices in this stack. */
+	@Override
 	public int size() {
 		return getSize();
 	}
 
+	@Override
 	public int getSize() {
 		return nSlices;
 	}
 
 	/** Returns the label of the Nth image. */
+	@Override
 	public String getSliceLabel(int n) {
 		if (labels==null)
 			return null;
@@ -372,44 +417,56 @@ public class ParallelVirtualStack extends ImageStack {
 	}
 	
 	/** Returns null. */
+	@Override
 	public Object[] getImageArray() {
 		return null;
 	}
 
    /** Does nothing. */
+	@Override
 	public void setSliceLabel(String label, int n) {
 	}
 
 	/** Always return true. */
+	@Override
 	public boolean isVirtual() {
 		return true;
 	}
 
    /** Does nothing. */
+	@Override
 	public void trim() {
 	}
 	
 	/** Returns the path to the directory containing the images. */
+	@Override
 	public String getDirectory() {
 		return IJ.addSeparator(path);
 	}
 		
 	/** Returns the file name of the specified slice, were 1<=n<=nslices. */
+	@Override
 	public String getFileName(int n) {
 		return names[n-1];
 	}
 	
 	/** Sets the bit depth (8, 16, 24 or 32). */
+	@Override
 	public void setBitDepth(int bitDepth) {
 		this.bitDepth = bitDepth;
 	}
 
 	/** Returns the bit depth (8, 16, 24 or 32), or 0 if the bit depth is not known. */
+	@Override
 	public int getBitDepth() {
 		return bitDepth;
 	}
 	
+	/** Sorts a stack of DICOM files by image number; the planes of an image keep their order. */
+	@Override
 	public ImageStack sortDicom(String[] strings, String[] info, int maxDigits) {
+		if (hasImage())
+			return this;
 		int n = size();
 		String[] names2 = new String[n];
 		for (int i=0; i<n; i++)
@@ -424,20 +481,31 @@ public class ParallelVirtualStack extends ImageStack {
 	}
 	
 	/** Returns the ImagePlus Properties assoctated with the current slice, or null. */
+	@Override
 	public Properties getProperties() {
 		return properties;
 	}
 	
 	/** Sets the table that translates slice numbers of hyperstacks not in default CZT order. */
+	@Override
 	public void setIndexes(int[] indexes) {
 		this.indexes = indexes;
 	}
 	
 	/** Translates slice numbers of hyperstacks not in default CZT order. */
+	@Override
 	public int translate(int n) {
 		int n2 = (indexes!=null&&indexes.length==getSize()) ? indexes[n-1]+1 : n;
 		//IJ.log("translate: "+n+" "+n2+" "+getSize()+" "+(indexes!=null?indexes.length:null));
 		return n2;
+	}
+
+	/**
+	 * Does nothing: ImageJ's Reduce then makes a reduced copy of the stack
+	 * in memory, as it does for any stack.
+	 */
+	@Override
+	public void reduce(int factor) {
 	}
 
 } 

@@ -4,7 +4,6 @@ import java.io.File;
 
 import ij.ImagePlus;
 import ij.ImageStack;
-import ij.ParallelImagePlus;
 import ij.ParallelVirtualStack;
 import ij.io.FileInfo;
 import ij.plugin.HyperStackConverter;
@@ -37,7 +36,8 @@ public class PRZ {
 		// ImageJ shows at most 32 bits per pixel: wider types become float
 		int tBits = zarr.displayBits();
 		long memNeeded = w*h*d*c*t*(Math.max(zarr.bits, tBits)/8);
-		boolean isVirtual = memNeeded > new Memory().maxMemory();
+		// -Dpfv.forceVirtual=true opens every image as a virtual stack (how the tests reach it with small files)
+		boolean isVirtual = Boolean.getBoolean("pfv.forceVirtual") || memNeeded > new Memory().maxMemory();
 
 		ImagePlus imp;
 		if(!isVirtual) {
@@ -58,7 +58,7 @@ public class PRZ {
 		}
 		else {
 			ParallelVirtualStack pVStack = new ParallelVirtualStack(zarr, x0, y0, z0, (int)w, (int)h, (int)d);
-			imp = new ParallelImagePlus(zarr.title, pVStack);
+			imp = new ImagePlus(zarr.title, pVStack);
 			if(c > 1 || t > 1) {
 				imp.setDimensions((int)c, (int)d, (int)t);
 				imp.setOpenAsHyperStack(true);

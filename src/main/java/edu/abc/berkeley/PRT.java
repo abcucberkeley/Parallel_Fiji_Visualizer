@@ -12,7 +12,6 @@ import ij.CompositeImage;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
-import ij.ParallelImagePlus;
 import ij.ParallelVirtualStack;
 import ij.Prefs;
 import ij.WindowManager;
@@ -63,7 +62,8 @@ public class PRT {
 
 		int planes = (int)tiff.planes();
 		long bytesPerPixel = tiff.isRgb() ? 4 : Math.min(tiff.bits, 32) / 8;
-		boolean isVirtual = (long)tiff.width*tiff.height*planes*bytesPerPixel > new Memory().maxMemory();
+		// -Dpfv.forceVirtual=true opens every image as a virtual stack (how the tests reach it with small files)
+		boolean isVirtual = Boolean.getBoolean("pfv.forceVirtual") || (long)tiff.width*tiff.height*planes*bytesPerPixel > new Memory().maxMemory();
 		Object[] pixels = isVirtual ? null : tiff.read(0, planes, "Reading "+f.getName());
 		FileInfo fi = imageJInfo != null ? firstInfo(imageJInfo) : null;
 		FileOpener fo = new FileOpener(null);
@@ -81,7 +81,7 @@ public class PRT {
 			ParallelVirtualStack pVStack = new ParallelVirtualStack(tiff);
 			if(cm != null) pVStack.setColorModel(cm);
 			stack = pVStack;
-			imp = new ParallelImagePlus(f.getName(), pVStack);
+			imp = new ImagePlus(f.getName(), pVStack);
 		}
 
 		if(fi != null) {
