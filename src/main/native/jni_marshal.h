@@ -463,6 +463,45 @@ inline bool checkSlices(JNIEnv* env, jobjectArray slices, uint64_t sliceElems,
 	return ok;
 }
 
+// Copy the first nSlices planes of slices, each sliceBytes bytes, into buf:
+// plane k to the plane-sized slot first + k * stride of buf. Batched and
+// pinned like slicesToJava; the planes must have been checked (checkSlices).
+// Returns false if a batch could not be pinned.
+inline bool copySlicesTo(JNIEnv* env, jobjectArray slices, uint64_t sliceBytes, uint64_t nSlices,
+                         void* buf, uint64_t first, uint64_t stride) {
+	const uint64_t perBatch = planesPerBatch(sliceBytes);
+	std::vector<jarray> arrays;
+	std::vector<const void*> src;
+	std::vector<void*> dst;
+	for (uint64_t start = 0; start < nSlices; start += perBatch) {
+		const uint64_t end = start + perBatch < nSlices ? start + perBatch : nSlices;
+		arrays.clear(); src.clear(); dst.clear();
+		if (env->EnsureLocalCapacity((jint)(end - start) + 4) < 0) return false;
+		for (uint64_t i = start; i < end; i++) {
+			jarray slice = (jarray)env->GetObjectArrayElement(slices, (jsize)i);
+			if (slice == nullptr) {
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				return false;
+			}
+			arrays.push_back(slice);
+		}
+		for (size_t k = 0; k < arrays.size(); k++) {
+			void* p = env->GetPrimitiveArrayCritical(arrays[k], nullptr);
+			if (p == nullptr) {
+				for (size_t j = 0; j < src.size(); j++) env->ReleasePrimitiveArrayCritical(arrays[j], (void*)src[j], JNI_ABORT);
+				for (auto a : arrays) env->DeleteLocalRef(a);
+				return false;
+			}
+			src.push_back(p);
+			dst.push_back((char*)buf + (first + (start + k) * stride) * sliceBytes);
+		}
+		copyPlanes(dst.data(), src.data(), (int64_t)src.size(), sliceBytes);
+		for (size_t k = 0; k < src.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], (void*)src[k], JNI_ABORT);
+		for (auto a : arrays) env->DeleteLocalRef(a);
+	}
+	return true;
+}
+
 // Copy a Java T[nSlices][sliceElems] into one contiguous native buffer
 // (malloc'd; the caller frees). elemBytes is the element size (1, 2 or 4);
 // the copy itself is type-agnostic. Batched and pinned like slicesToJava.
@@ -474,39 +513,35 @@ inline void* slicesToNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElem
 	const uint64_t sliceBytes = sliceElems * elemBytes;
 	void* buf = malloc(sliceBytes * nSlices);
 	if (buf == nullptr) return nullptr;
-	const uint64_t perBatch = planesPerBatch(sliceBytes);
-	std::vector<jarray> arrays;
-	std::vector<const void*> src;
-	std::vector<void*> dst;
-	for (uint64_t start = 0; start < nSlices; start += perBatch) {
-		const uint64_t end = start + perBatch < nSlices ? start + perBatch : nSlices;
-		arrays.clear(); src.clear(); dst.clear();
-		if (env->EnsureLocalCapacity((jint)(end - start) + 4) < 0) { free(buf); return nullptr; }
-		for (uint64_t i = start; i < end; i++) {
-			jarray slice = (jarray)env->GetObjectArrayElement(slices, (jsize)i);
-			if (slice == nullptr) {
-				for (auto a : arrays) env->DeleteLocalRef(a);
-				free(buf);
-				return nullptr;
-			}
-			arrays.push_back(slice);
-		}
-		for (size_t k = 0; k < arrays.size(); k++) {
-			void* p = env->GetPrimitiveArrayCritical(arrays[k], nullptr);
-			if (p == nullptr) {
-				for (size_t j = 0; j < src.size(); j++) env->ReleasePrimitiveArrayCritical(arrays[j], (void*)src[j], JNI_ABORT);
-				for (auto a : arrays) env->DeleteLocalRef(a);
-				free(buf);
-				return nullptr;
-			}
-			src.push_back(p);
-			dst.push_back((char*)buf + (start + k) * sliceBytes);
-		}
-		copyPlanes(dst.data(), src.data(), (int64_t)src.size(), sliceBytes);
-		for (size_t k = 0; k < src.size(); k++) env->ReleasePrimitiveArrayCritical(arrays[k], (void*)src[k], JNI_ABORT);
-		for (auto a : arrays) env->DeleteLocalRef(a);
+	if (!copySlicesTo(env, slices, sliceBytes, nSlices, buf, 0, 1)) {
+		free(buf);
+		return nullptr;
 	}
 	return buf;
+}
+
+// Copy the first nSlices planes of slices into buf, a native buffer of
+// bufBytes bytes, plane k to the plane-sized slot first + k * stride (a run
+// of a save holds the planes of its channels interleaved). Planes that are
+// missing or of another size or type are refused as by slicesToNative, and so
+// are slots past the end of buf: false is returned with a RuntimeException
+// pending.
+inline bool slicesIntoNative(JNIEnv* env, jobjectArray slices, uint64_t sliceElems, uint64_t nSlices,
+                             uint64_t elemBytes, void* buf, uint64_t bufBytes, uint64_t first, uint64_t stride) {
+	if (!checkSlices(env, slices, sliceElems, nSlices, elemBytes)) return false;
+	const uint64_t sliceBytes = sliceElems * elemBytes;
+	if (nSlices == 0) return true;
+	// (the last slot first + (nSlices - 1) * stride, tested without overflowing)
+	const uint64_t slots = sliceBytes == 0 ? 0 : bufBytes / sliceBytes;
+	if (buf == nullptr || first >= slots || (nSlices > 1 && stride > (slots - 1 - first) / (nSlices - 1))) {
+		throwRuntime(env, "The planes to write do not fit their native buffer");
+		return false;
+	}
+	if (!copySlicesTo(env, slices, sliceBytes, nSlices, buf, first, stride)) {
+		throwRuntime(env, "Could not reach the planes to write");
+		return false;
+	}
+	return true;
 }
 
 } // namespace pfv

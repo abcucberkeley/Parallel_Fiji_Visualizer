@@ -1,13 +1,19 @@
 package edu.abc.berkeley;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.Random;
 
 import javax.swing.JFileChooser;
 
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
+import ij.ParallelVirtualStack;
 import ij.WindowManager;
 import ij.io.FileInfo;
 import ij.io.FileSaver;
@@ -53,69 +59,136 @@ public class PWT {
 		return new File(f.getParentFile(), SaveDialog.setExtension(name, ".tif"));
 	}
 
-	/** Writes imp to the TIFF fileName, on the calling thread. */
+	/**
+	 * Writes imp to the TIFF fileName, on the calling thread. A virtual
+	 * stack's read-ahead is off meanwhile (see pauseReadAhead).
+	 */
 	static void write(ImagePlus cImagePlus, String fileName) {
+		ImageStack stack = cImagePlus.getImageStack();
+		boolean paused = pauseReadAhead(stack);
+		try {
+			writeTiff(cImagePlus, stack, fileName);
+		}
+		finally {
+			if (paused) ((ParallelVirtualStack) stack).setReadAhead(true);
+		}
+	}
+
+	private static void writeTiff(ImagePlus cImagePlus, ImageStack cImageStack, String fileName) {
 		// Special case for ImageJ images
 		FileInfo info = cImagePlus.getOriginalFileInfo();
 		if(info!=null) {
 			if(info.description!=null) {
 				if(info.description.contains("ImageJ")) {
-					FileSaver fs = new FileSaver(cImagePlus);
-			        fs.saveAsTiff(fileName);
+					saveWithImageJ(cImagePlus, fileName);
 					return;
 				}
 			}
 		}
 
-		
-		
 		// RGB images: cpp-tiff's writer is grayscale-only, use ImageJ's writer
 		if(cImagePlus.getType() == ImagePlus.COLOR_RGB) {
-			FileSaver fs = new FileSaver(cImagePlus);
-			fs.saveAsTiff(fileName);
+			saveWithImageJ(cImagePlus, fileName);
 			return;
 		}
-
-		ImageStack cImageStack = cImagePlus.getImageStack();
 
 		// May need to get bits another way
 		int bits = cImageStack.getBitDepth();
 		int x = cImageStack.getWidth();
 		int y = cImageStack.getHeight();
 		int z = cImageStack.getSize();
-		// The planes themselves, not the stack's array of them: a virtual stack
-		// has no such array (its planes are read here, one by one)
-		Object[] cImageObj = new Object[z];
-		for(int i = 0; i < z; i++) cImageObj[i] = cImageStack.getPixels(i+1);
-		final long totalBytes = (long)x*y*z*(bits/8);
-		final File outFile = new File(fileName);
+		if(bits != 8 && bits != 16 && bits != 32) throw new RuntimeException("Unsupported bit depth for TIFF writing (expected 8, 16 or 32)");
+		final long planeElems = (long)x*y, planeBytes = planeElems*(bits/8);
+		final long totalBytes = planeBytes*z;
+		final File outFile = new File(fileName).getAbsoluteFile();
+		// Written under a name of its own beside the file, which becomes the
+		// file only once complete: a save that fails leaves the folder as it
+		// was, a file of that name included
+		final File part = partOf(outFile);
 		// The heuristic estimate is raised by the real growth of the output file.
 		ProgressEstimator progress = ProgressEstimator.begin("writeTiff", totalBytes,
-			z, "Writing "+outFile.getName(), () -> outFile.length() / (double)totalBytes);
+			z, "Writing "+outFile.getName(), () -> part.length() / (double)totalBytes);
 		try {
-			new ParallelWriteNative().parallelWriteTiff(fileName, cImageObj, x, y, z, bits);
+			makeFolders(outFile);
+			// Runs of slices, each copied to native memory and written (the
+			// first as a new file, the others appended to it): the image is not
+			// held twice, and a virtual stack's planes are read as they go.
+			int perRun = (int)Math.max(1, Math.min(z, ParallelWriteNative.tiffRunBytes() / planeBytes));
+			try (ParallelWriteNative.PlaneBuffer run = ParallelWriteNative.PlaneBuffer.allocate(planeElems, bits, perRun, 1)) {
+				perRun = run.planes;
+				for(int first = 0; first < z; first += perRun) {
+					int n = Math.min(perRun, z - first);
+					run.put(cImageStack, first + 1, 1, n, 0, 1);
+					run.natives.writeTiffPlanes(part.getPath(), run.address(), run.capacity(), x, y, n, bits, first > 0, z);
+				}
+			}
+			moveIntoPlace(part, outFile);
 			progress.finish();
-		} finally {
+		}
+		catch(IOException e) {
+			throw new RuntimeException("Could not save " + outFile.getName() + ": " + e, e);
+		}
+		finally {
 			progress.abort();
+			// After a failure (the writers have closed it by now: Windows deletes no open file)
+			if(part.exists() && !part.delete()) IJ.log("Could not remove the incomplete " + part);
 		}
+	}
 
-		/*
-		if(bits == 8) {
+	/**
+	 * Saves with ImageJ's FileSaver, which reads a virtual stack's planes one
+	 * by one. A file it could not complete is removed, unless it was there
+	 * before (ImageJ refuses to save a virtual stack over its own file).
+	 */
+	private static void saveWithImageJ(ImagePlus imp, String fileName) {
+		File file = new File(fileName);
+		boolean existed = file.exists();
+		if(new FileSaver(imp).saveAsTiff(fileName)) return;
+		if(!existed && file.exists() && !file.delete()) IJ.log("Could not remove the incomplete " + file);
+		throw new RuntimeException("ImageJ could not save " + file.getName() + " (see its message)");
+	}
 
+	/**
+	 * Turns the read-ahead of a ParallelVirtualStack off for a save, which
+	 * reads its planes in runs rather than as scrolling does: reads ahead
+	 * would read planes the save is not after, and one still under way when
+	 * the save ends would hold the file, which Windows then neither replaces
+	 * nor deletes. Returns whether it did; the switch has no getter, and only
+	 * tests ever turn it off, so the save turns it on again after.
+	 */
+	static boolean pauseReadAhead(ImageStack stack) {
+		if(!(stack instanceof ParallelVirtualStack)) return false;
+		((ParallelVirtualStack) stack).setReadAhead(false);
+		return true;
+	}
+
+	/**
+	 * The name a save writes file under until it is complete: hidden, beside
+	 * it (so the rename stays on one file system), and of this save alone.
+	 */
+	static File partOf(File file) {
+		File f = file.getAbsoluteFile();
+		return new File(f.getParentFile(), "." + f.getName() + "." + Long.toHexString(PART_IDS.nextLong() & Long.MAX_VALUE) + ".part");
+	}
+
+	private static final Random PART_IDS = new Random();
+
+	/** Makes the folders file is to go in, as cpp-tiff did for the files it wrote. */
+	static void makeFolders(File file) throws IOException {
+		File parent = file.getAbsoluteFile().getParentFile();
+		if(parent != null) Files.createDirectories(parent.toPath());
+	}
+
+	/**
+	 * Renames the complete part to file, replacing a file of that name (in one
+	 * step where the file system allows: no reader ever sees half a file).
+	 */
+	static void moveIntoPlace(File part, File file) throws IOException {
+		try {
+			Files.move(part.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE);
 		}
-		else if(bits == 16) {
-
+		catch(AtomicMoveNotSupportedException e) {
+			Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING);
 		}
-		else if(bits == 32) {
-
-		}
-		else if(bits == 64) {
-
-		}
-		else {
-			IJ.log("Data type not supported\n");
-			return;
-		}*/
-		//currIm.show();
 	}
 }
