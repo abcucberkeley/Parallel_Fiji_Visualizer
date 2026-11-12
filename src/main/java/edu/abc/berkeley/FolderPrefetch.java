@@ -190,7 +190,13 @@ public final class FolderPrefetch implements AutoCloseable {
 	private ImagePlus read(int i) {
 		ProgressEstimator.quietInThisThread();
 		ParallelReadNative.limitThreads(threadsEach);
-		return open(i);
+		ImagePlus imp = open(i);
+		// The opener asks each image for its stack, which finds the display
+		// range of its current plane (a pass over it); asked here, the reader
+		// makes that pass and the opener's one thread finds it done. The same
+		// call on the same image, so the folder's display range is unchanged
+		if (imp != null) imp.getStack();
+		return imp;
 	}
 
 	/** Exactly how the folder opener opens a TIFF or Zarr. */

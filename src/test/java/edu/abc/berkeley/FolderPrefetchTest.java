@@ -168,6 +168,65 @@ public class FolderPrefetchTest {
 		}
 	}
 
+	/**
+	 * Single-plane 16-bit files, each of its own range: the readers find each
+	 * file's display range, and the folder's is still that of all its pixels.
+	 */
+	@Test
+	public void sixteenBitPlanesKeepTheirDisplayRange() throws Exception {
+		File dir = tmp.newFolder("planes16");
+		ParallelWriteNative writer = new ParallelWriteNative();
+		int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+		for (int f = 0; f < 24; f++) {
+			short[][] s = new short[1][W * H];
+			int low = 100 + 997 * f, span = 50 + 211 * (f % 7);
+			for (int i = 0; i < W * H; i++) {
+				int v = low + (i * 37 + f) % span;
+				s[0][i] = (short) v;
+				min = Math.min(min, v);
+				max = Math.max(max, v);
+			}
+			writer.parallelWriteTiff(new File(dir, String.format("plane_%02d.tif", f)).getPath(), s, W, H, 1, 16);
+		}
+		ImagePlus imp = assertSameEveryWay(dir);
+		assertEquals(24, imp.getStackSize());
+		assertEquals(min, imp.getDisplayRangeMin(), 0);
+		assertEquals(max, imp.getDisplayRangeMax(), 0);
+	}
+
+	/**
+	 * ImageJ's single-plane 16-bit and float TIFFs, each saved with a display
+	 * range of its own (and a calibration): the same folder for every reader count.
+	 */
+	@Test
+	public void planesWithTheirOwnDisplayRangesOpenTheSame() throws Exception {
+		for (String kind : new String[] { "16-bit", "32-bit" }) {
+			File dir = tmp.newFolder("ranges" + kind);
+			boolean shorts = kind.equals("16-bit");
+			for (int f = 0; f < 16; f++) {
+				ImageProcessor ip = shorts ? new ShortProcessor(W, H) : new FloatProcessor(W, H);
+				for (int i = 0; i < W * H; i++)
+					ip.setf(i, shorts ? 200 + 503 * f + (i * 13) % (40 + 17 * f) : -2.5f * f + 0.01f * ((i * 7 + f) % 900));
+				ip.resetMinAndMax();
+				// Every second file shows a narrower range than its pixels, so one read from the file shows
+				double lo = ip.getMin(), hi = ip.getMax();
+				if (f % 2 == 1) ip.setMinAndMax(lo + (hi - lo) / 4, hi - (hi - lo) / 4);
+				ImagePlus imp = new ImagePlus("p" + f, ip);
+				Calibration cal = imp.getCalibration();
+				cal.pixelWidth = 0.108;
+				cal.pixelHeight = 0.108;
+				cal.pixelDepth = 0.3;
+				cal.setUnit("micron");
+				assertTrue(new FileSaver(imp).saveAsTiff(new File(dir, String.format("p_%02d.tif", f)).getPath()));
+			}
+			ImagePlus imp = assertSameEveryWay(dir);
+			assertEquals(kind, 16, imp.getStackSize());
+			assertEquals(kind, "micron", imp.getCalibration().getUnit());
+			// The TIFF holds the pixel size as a fraction, so it reads back close to what was saved
+			assertEquals(kind, 0.108, imp.getCalibration().pixelWidth, 1e-6);
+		}
+	}
+
 	/** 16-bit color: one composite per file, its channels stacked. */
 	@Test
 	public void sixteenBitColorOpensTheSame() throws Exception {
