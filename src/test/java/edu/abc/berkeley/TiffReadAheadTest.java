@@ -417,4 +417,17 @@ public class TiffReadAheadTest {
 		assertTrue("available memory " + available, available >= 0);
 		if (new File("/proc/meminfo").exists()) assertTrue("no available memory on Linux", available > 0);
 	}
+
+	/**
+	 * What a whole read holds beside its planes, as the guard counts it: an
+	 * ImageJ stack of single samples is read straight into its planes, one of
+	 * several samples through a slab, and cpp-tiff's files under 8 GiB in one
+	 * piece.
+	 */
+	@Test
+	public void storedBytesFollowTheReaders() throws Exception {
+		assertEquals(0, TiffImage.open(imageJStack("one sample.tif", 4, 1)).storedBytes());
+		assertEquals((long) W * H * 3 * 2 * 4, TiffImage.open(imageJStack("three samples.tif", 4, 3)).storedBytes());
+		assertEquals((long) W * H * 2 * 4, TiffImage.open(cppTiffStack("plain.tif", 4)).storedBytes());
+	}
 }

@@ -109,9 +109,23 @@ public final class TiffImage {
 		return planes() * bytesPerPlane();
 	}
 
-	/** The bytes of the slices as stored: cpp-tiff's buffer, which a read holds beside the planes. */
+	/**
+	 * The bytes of the native buffer a whole read holds beside the planes (the
+	 * read-ahead's guard counts them): none for an ImageJ stack whose planes
+	 * take its samples as stored (read straight into them), at most a slab of
+	 * 1 GiB of whole slices for other ImageJ stacks, and for the files
+	 * cpp-tiff reads, a slab as reader_tiff.cpp's tiffSlabSlices cuts them:
+	 * the whole image under 8 GiB, else one slab per 4 GiB of the image, at
+	 * most 8 and at most one per MiB of a slice (but 2 in any case).
+	 */
 	long storedBytes() {
-		return (long) width * height * slices * samples * (bits / 8);
+		long slice = (long) width * height * samples * (bits / 8), bytes = slices * slice;
+		if (info[ParallelReadNative.TIFF_IMAGEJ] != 0) {
+			boolean asStored = samples == 1 && (bits <= 16 ? sampleFormat != 2 : bits == 32 && sampleFormat == 3);
+			return asStored ? 0 : Math.min(bytes, Math.max(1L << 30, slice));
+		}
+		long slabs = Math.min(Math.min(8, bytes / (4L << 30)), Math.max(2, slice >> 20));
+		return slabs <= 1 ? bytes : (slices + slabs - 1) / slabs * slice;
 	}
 
 	/**
