@@ -78,6 +78,11 @@ public final class ProgressEstimator {
 		QUIET.set(Boolean.TRUE);
 	}
 
+	/** Whether operations on the calling thread show no progress: a folder's reader threads. */
+	static boolean isQuietThread() {
+		return QUIET.get();
+	}
+
 	/** What operations on a quiet thread get: an estimator that shows nothing. */
 	private static final ProgressEstimator SILENT = new ProgressEstimator();
 

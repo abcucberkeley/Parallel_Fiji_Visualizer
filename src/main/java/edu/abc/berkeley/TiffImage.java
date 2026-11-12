@@ -9,6 +9,7 @@ import static edu.abc.berkeley.ParallelReadNative.TIFF_WIDTH;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A TIFF file as ImageJ planes, read with cpp-tiff from one description of
@@ -28,12 +29,25 @@ public final class TiffImage {
 	/** Bits and samples per pixel, and the sample format (1 = unsigned, 2 = signed, 3 = float). */
 	public final int bits, samples, sampleFormat;
 	private final long[] info;
+	/** Reads a cold file ahead until the first read returns (see TiffReadAhead); null then, or if none. */
+	private final AtomicReference<TiffReadAhead> readAhead = new AtomicReference<TiffReadAhead>();
 
 	/**
 	 * @throws RuntimeException when the file cannot be read as a TIFF
 	 */
 	public static TiffImage open(String path) {
-		return new TiffImage(path);
+		// A cold file is read into the page cache while its directories are
+		// walked and its planes allocated, so that both find it there
+		TiffReadAhead ahead = TiffReadAhead.arm(path);
+		try {
+			TiffImage tiff = new TiffImage(path);
+			if (ahead != null && ahead.described(tiff.planeBytes(), tiff.storedBytes())) tiff.readAhead.set(ahead);
+			return tiff;
+		}
+		catch (RuntimeException | Error e) {
+			if (ahead != null) ahead.close();
+			throw e;
+		}
 	}
 
 	private TiffImage(String path) {
@@ -80,14 +94,32 @@ public final class TiffImage {
 		return sampleFormat == 2 && bits <= 16;
 	}
 
+	/** The bytes of the image's planes, as PRT counts them to decide whether they fit in memory. */
+	long planeBytes() {
+		return (long) width * height * planes() * (isRgb() ? 4 : Math.min(bits, 32) / 8);
+	}
+
+	/** The bytes of the slices as stored: cpp-tiff's buffer, which a read holds beside the planes. */
+	long storedBytes() {
+		return (long) width * height * slices * samples * (bits / 8);
+	}
+
 	/** ImageJ planes [first, last), as pixel arrays. */
 	public Object[] read(long first, long last) {
-		int c = channels();
-		long z0 = first / c, z1 = (last + c - 1) / c;
-		Object[] planes = readSlices(z0, z1);
-		int from = (int) (first - z0 * c);
-		if (from == 0 && planes.length == last - first) return planes;
-		return Arrays.copyOfRange(planes, from, from + (int) (last - first));
+		TiffReadAhead ahead = readAhead.get();
+		if (ahead != null) ahead.reading();
+		try {
+			int c = channels();
+			long z0 = first / c, z1 = (last + c - 1) / c;
+			Object[] planes = readSlices(z0, z1);
+			int from = (int) (first - z0 * c);
+			if (from == 0 && planes.length == last - first) return planes;
+			return Arrays.copyOfRange(planes, from, from + (int) (last - first));
+		}
+		finally {
+			// The file has been read, or cannot be
+			if (ahead != null && readAhead.compareAndSet(ahead, null)) ahead.close();
+		}
 	}
 
 	/** {@link #read(long, long)}, showing the progress bar labeled with what. */
