@@ -165,6 +165,7 @@ public class TiffReadTest {
 		String path = writeStack("virtual.tif", 6);
 		ParallelVirtualStack stack = new ParallelVirtualStack(TiffImage.open(path));
 		stack.setMaxBlockPlanes(2); // blocks {1,2} {3,4} {5,6}
+		stack.setReadAhead(false); // reads on request only (VirtualStackReadAheadTest counts them with reading ahead)
 		assertEquals(6, stack.getSize());
 		assertEquals(16, stack.getBitDepth());
 		int[] order         = { 1, 2, 3, 4, 5, 6,   6, 5, 4, 3, 2, 1,   5 };

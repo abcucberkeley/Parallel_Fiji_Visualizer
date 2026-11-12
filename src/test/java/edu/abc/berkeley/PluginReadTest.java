@@ -232,6 +232,7 @@ public class PluginReadTest {
 		ParallelVirtualStack stack = new ParallelVirtualStack(W, H, nz, null, path);
 		stack.setBitDepth(16);
 		stack.setMaxBlockPlanes(2); // blocks {1,2} {3,4} {5,6}
+		stack.setReadAhead(false); // reads on request only (VirtualStackReadAheadTest counts them with reading ahead)
 
 		int[] order         = { 1, 2, 3, 4, 5, 6,   6, 5, 4, 3, 2, 1,   5 };
 		int[] expectedReads = { 1, 1, 2, 2, 3, 3,   3, 3, 3, 3, 4, 4,   5 };

@@ -45,13 +45,24 @@ public class ParallelVirtualStack extends VirtualStack {
 	// boundary, or between two channels, is free. TIFFs are read the same way,
 	// in blocks of consecutive planes: one read of several slices keeps every
 	// core busy, where a slice alone often has too few strips to.
+	//
+	// While the user scrolls (or a command walks the planes in order), one
+	// background thread reads the block after the current one (before it,
+	// scrolling back), so that crossing into it does not stall the event
+	// thread for a whole block read. Reads stay one at a time: a request
+	// outside the blocks held waits for the read under way, which is often
+	// the very block it needs.
 	private ZarrImage zarr;
 	private TiffImage tiff;
 	private long x0, y0, z0;          // the window's corner in the image
 	private int depth = 1, channels = 1;
 	private int maxBlockPlanes = 16;   // caps the stall of a single fetch
-	private Block block, previousBlock;
+	private Block block, previousBlock, aheadBlock;
 	private int blockReads = 0;
+	private boolean readAhead = true;   // the user's switch
+	private boolean aheadFailed;        // a read ahead ran out of heap: no more for this stack
+	private Thread aheadThread;         // the read ahead under way, or null
+	private int lastC = -1, lastT = -1, lastZ = -1;   // the plane served last
 
 	/** Planes [start, start + planes.length) along z of one channel and time point (0-based). */
 	private static final class Block {
@@ -75,9 +86,24 @@ public class ParallelVirtualStack extends VirtualStack {
 		maxBlockPlanes = Math.max(1, planes);
 	}
 
-	/** Number of block reads performed so far (diagnostics and tests). */
-	public int getBlockReads() {
+	/** Number of block reads performed so far, read ahead or on request (diagnostics and tests). */
+	public synchronized int getBlockReads() {
 		return blockReads;
+	}
+
+	/**
+	 * Whether the next block is read in the background while planes are
+	 * fetched in order (default on). Off, every block is read when a plane
+	 * of it is first asked for, as the tests that count reads expect.
+	 */
+	public synchronized void setReadAhead(boolean on) {
+		readAhead = on;
+	}
+
+	/** Bytes of one plane as held in the heap. */
+	private long planeBytes() {
+		long bytesPerPixel = bitDepth == 24 ? 4 : Math.max(1, bitDepth / 8);
+		return (long) getWidth() * getHeight() * bytesPerPixel;
 	}
 
 	/**
@@ -85,21 +111,58 @@ public class ParallelVirtualStack extends VirtualStack {
 	 * of two so aligned blocks never straddle a chunk row. Sizing from the
 	 * maximum heap (not the free heap) keeps the block size constant for the
 	 * life of the stack, so blocks keep lining up and the previous block stays
-	 * reusable. Two blocks may be held plus the JNI copy of an incoming one.
+	 * reusable. Three blocks may be held (the current, the previous and the
+	 * one read ahead, or the one being read in place of either): an eighth of
+	 * the heap each keeps them under half of it.
 	 */
 	private int planesPerBlock() {
-		long bytesPerPixel = bitDepth == 24 ? 4 : Math.max(1, bitDepth / 8);
-		long planeBytes = (long) getWidth() * getHeight() * bytesPerPixel;
-		long budget = Runtime.getRuntime().maxMemory() / 6;
-		long k = Math.max(1, Math.min(maxBlockPlanes, budget / Math.max(1, planeBytes)));
+		long budget = Runtime.getRuntime().maxMemory() / 8;
+		long k = Math.max(1, Math.min(maxBlockPlanes, budget / Math.max(1, planeBytes())));
 		return Integer.highestOneBit((int) k);
 	}
 
-	/** The pixels of plane n (1-based, in czt order), reading its block if needed. */
+	/**
+	 * The heap free right now, garbage counted as used: a read ahead only
+	 * starts when the heap can take its block without a collection, so it
+	 * never competes with the event thread (or another image) for the last
+	 * of it. Overridable for tests.
+	 */
+	protected long freeHeapBytes() {
+		Runtime r = Runtime.getRuntime();
+		return r.maxMemory() - (r.totalMemory() - r.freeMemory());
+	}
+
+	/**
+	 * Reads planes [start, end) along z of channel c and time point t
+	 * (0-based), with a progress bar when the user waits for them.
+	 * Overridable for tests.
+	 */
+	protected Object[] readBlock(int c, int t, int start, int end, boolean showProgress) {
+		if (zarr != null) {
+			long[] from = { x0, y0, z0 + start, c, t }, to = { x0 + getWidth(), y0 + getHeight(), z0 + end, c + 1, t + 1 };
+			return showProgress ? zarr.read(from, to, "Reading " + zarr.title) : zarr.read(from, to);
+		}
+		return showProgress ? tiff.read(start, end, "Reading " + tiff.title) : tiff.read(start, end);
+	}
+
+	/** The pixels of plane n (1-based, in czt order), reading its block if needed. Called holding this stack's lock. */
 	private Object pixelsOf(int n) {
 		if (zarr == null && tiff == null) throw new IllegalStateException("This virtual stack has no image to read");
 		int i = n - 1;
 		int c = i % channels, z = (i / channels) % depth, t = i / (channels * depth);
+		Object pixels = cachedPixels(c, t, z);
+		if (pixels == null && aheadThread != null) {
+			// One read at a time: wait for the one under way, then look again
+			awaitReadAhead();
+			pixels = cachedPixels(c, t, z);
+		}
+		if (pixels == null) pixels = readOnRequest(c, t, z);
+		readAheadFrom(c, t, z);
+		return pixels;
+	}
+
+	/** Plane z of channel c and time point t from the blocks held, its block becoming the current one; null if none holds it. */
+	private Object cachedPixels(int c, int t, int z) {
 		if (block != null && block.holds(c, t, z))
 			return block.planes[z - block.start];
 		if (previousBlock != null && previousBlock.holds(c, t, z)) {
@@ -108,6 +171,17 @@ public class ParallelVirtualStack extends VirtualStack {
 			block = b;
 			return block.planes[z - block.start];
 		}
+		if (aheadBlock != null && aheadBlock.holds(c, t, z)) {
+			previousBlock = block;
+			block = aheadBlock;
+			aheadBlock = null;
+			return block.planes[z - block.start];
+		}
+		return null;
+	}
+
+	/** Reads the block of plane z of channel c and time point t while the caller waits. */
+	private Object readOnRequest(int c, int t, int z) {
 		previousBlock = block;   // the block evicted here becomes garbage before the read allocates
 		block = null;
 		blockReads++;
@@ -116,11 +190,7 @@ public class ParallelVirtualStack extends VirtualStack {
 			int start = (z / k) * k;
 			int end = Math.min(start + k, depth);
 			try {
-				Object[] planes = zarr != null
-					? zarr.read(new long[] { x0, y0, z0 + start, c, t },
-						new long[] { x0 + getWidth(), y0 + getHeight(), z0 + end, c + 1, t + 1 }, "Reading " + zarr.title)
-					: tiff.read(start, end, "Reading " + tiff.title);
-				block = new Block(c, t, start, planes);
+				block = new Block(c, t, start, readBlock(c, t, start, end, true));
 				return block.planes[z - start];
 			}
 			catch (OutOfMemoryError e) {
@@ -129,8 +199,87 @@ public class ParallelVirtualStack extends VirtualStack {
 				// of the session and try again.
 				maxBlockPlanes = k / 2;
 				previousBlock = null;
+				aheadBlock = null;
 				System.gc();
 			}
+		}
+	}
+
+	/** Waits for the read ahead under way to end. */
+	private void awaitReadAhead() {
+		boolean interrupted = false;
+		while (aheadThread != null) {
+			try {
+				wait();
+			}
+			catch (InterruptedException e) {
+				// The read cannot be stopped, and the next must not overlap it
+				interrupted = true;
+			}
+		}
+		if (interrupted) Thread.currentThread().interrupt();
+	}
+
+	/**
+	 * After plane z of channel c and time point t was served: if it is a step
+	 * of at most a block from the plane served before it, of the same channel
+	 * and time point, reads the block beyond the current one in that direction
+	 * in the background, unless it is held already or the heap is short.
+	 * Jumps (a plane picked far away) and channels shown together, which
+	 * alternate between channels, read nothing ahead.
+	 */
+	private void readAheadFrom(int c, int t, int z) {
+		int step = c == lastC && t == lastT ? z - lastZ : 0;
+		lastC = c;
+		lastT = t;
+		lastZ = z;
+		if (!readAhead || aheadFailed || step == 0 || aheadThread != null || block == null) return;
+		final int k = planesPerBlock();
+		if (Math.abs(step) > k) return;
+		int beyond = step > 0 ? block.start + block.planes.length : block.start - 1;
+		if (beyond < 0 || beyond >= depth) return;
+		if ((previousBlock != null && previousBlock.holds(c, t, beyond)) || (aheadBlock != null && aheadBlock.holds(c, t, beyond))) return;
+		final int start = (beyond / k) * k, end = Math.min(start + k, depth);
+		// Leave an eighth of the heap free beside the block, garbage counted as used
+		if (freeHeapBytes() - (end - start) * planeBytes() < Runtime.getRuntime().maxMemory() / 8) return;
+		final int ac = c, at = t;
+		Thread reader = new Thread(new Runnable() {
+			public void run() {
+				readBlockAhead(ac, at, start, end);
+			}
+		}, "PFV block read-ahead");   // not TiffReadAhead's "PFV read-ahead"
+		reader.setDaemon(true);
+		try {
+			reader.start();
+		}
+		catch (Throwable e) {
+			return;   // no thread to spare: read it when asked for
+		}
+		// Read with the current and the previous block held: the one read ahead earlier gives way
+		aheadBlock = null;
+		aheadThread = reader;
+		blockReads++;
+	}
+
+	/** The background thread's work: reads the block and offers it to the requests. */
+	private void readBlockAhead(int c, int t, int start, int end) {
+		Object[] planes = null;
+		boolean outOfMemory = false;
+		try {
+			planes = readBlock(c, t, start, end, false);
+		}
+		catch (OutOfMemoryError e) {
+			// The planes read so far are dropped with the error
+			outOfMemory = true;
+		}
+		catch (Throwable e) {
+			// The read on request will report it
+		}
+		synchronized (this) {
+			if (outOfMemory) aheadFailed = true;
+			if (planes != null) aheadBlock = new Block(c, t, start, planes);
+			aheadThread = null;
+			notifyAll();
 		}
 	}
 
