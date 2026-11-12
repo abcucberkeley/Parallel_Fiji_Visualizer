@@ -161,13 +161,15 @@ inline void copyPlanes(void* const* dst, const void* const* src, int64_t n, uint
 	}
 }
 
-// Planes per batch: about 256 MB, at least one plane, at most 4096 planes
-// (each batch member holds a JNI local reference while pinned).
+// The most planes a batch pins: each holds a JNI local reference meanwhile
+const uint64_t maxBatchPlanes = 4096;
+
+// Planes per batch: about 256 MB, at least one plane, at most maxBatchPlanes.
 inline uint64_t planesPerBatch(uint64_t sliceBytes) {
 	const uint64_t target = 256u << 20;
-	uint64_t n = sliceBytes == 0 ? 4096 : target / sliceBytes;
+	uint64_t n = sliceBytes == 0 ? maxBatchPlanes : target / sliceBytes;
 	if (n < 1) n = 1;
-	if (n > 4096) n = 4096;
+	if (n > maxBatchPlanes) n = maxBatchPlanes;
 	return n;
 }
 
@@ -243,16 +245,20 @@ jobjectArray slicesToJavaWith(JNIEnv* env, uint64_t sliceElems, uint64_t nSlices
 
 // Fill the existing Java planes dest[idx[k]], k in [0, n), each of sliceElems
 // elements, by fill(dst, k0, count), which must write planes idx[k0..k0+count)
-// to dst[0..count). Pinned a batch at a time like slicesToJavaWith. Returns
-// false, with a Java exception pending, if a plane is missing or the wrong size.
-template <typename T, typename Fill>
-bool fillJavaPlanes(JNIEnv* env, jobjectArray dest, uint64_t sliceElems, const uint64_t* idx, uint64_t n, Fill fill) {
+// to dst[0..count). Pinned a batch at a time like slicesToJavaWith, the batch
+// from k0 holding batch(k0) planes (at least one, at most maxBatchPlanes; the
+// overload below pins about 256 MB at a time). Returns false, with a Java
+// exception pending, if a plane is missing or the wrong size.
+template <typename T, typename Fill, typename Batch>
+bool fillJavaPlanes(JNIEnv* env, jobjectArray dest, uint64_t sliceElems, const uint64_t* idx, uint64_t n, Fill fill, Batch batch) {
 	using Traits = JniArrayTraits<T>;
-	const uint64_t perBatch = planesPerBatch(sliceElems * sizeof(T));
 	std::vector<typename Traits::ArrayType> arrays;
 	std::vector<T*> dst;
-	for (uint64_t k0 = 0; k0 < n; k0 += perBatch) {
-		const uint64_t k1 = k0 + perBatch < n ? k0 + perBatch : n;
+	for (uint64_t k0 = 0, k1; k0 < n; k0 = k1) {
+		uint64_t perBatch = batch(k0);
+		if (perBatch < 1) perBatch = 1;
+		if (perBatch > maxBatchPlanes) perBatch = maxBatchPlanes;
+		k1 = k0 + perBatch < n ? k0 + perBatch : n;
 		arrays.clear(); dst.clear();
 		if (env->EnsureLocalCapacity((jint)(k1 - k0) + 4) < 0) return false;
 		for (uint64_t k = k0; k < k1; k++) {
@@ -279,6 +285,12 @@ bool fillJavaPlanes(JNIEnv* env, jobjectArray dest, uint64_t sliceElems, const u
 		for (auto a : arrays) env->DeleteLocalRef(a);
 	}
 	return true;
+}
+
+template <typename T, typename Fill>
+bool fillJavaPlanes(JNIEnv* env, jobjectArray dest, uint64_t sliceElems, const uint64_t* idx, uint64_t n, Fill fill) {
+	const uint64_t perBatch = planesPerBatch(sliceElems * sizeof(T));
+	return fillJavaPlanes<T>(env, dest, sliceElems, idx, n, fill, [perBatch](uint64_t) { return perBatch; });
 }
 
 // Build a T[nSlices][sliceElems] Java array from a native buffer holding the

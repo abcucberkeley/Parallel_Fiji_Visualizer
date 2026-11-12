@@ -240,6 +240,13 @@ public class ParallelReadNative {
 		return parallelReadTiffRGB8(fileName, i, 0, i[TIFF_SLICES], newIntPlanes(i[TIFF_SLICES], i[TIFF_WIDTH] * i[TIFF_HEIGHT]));
 	}
 
+	/**
+	 * For tests: the most bytes of slices a read of an ImageJ stack converts
+	 * through its native buffer at a time (1 GiB by default, at least one
+	 * slice; 0 or less: the default again). Other TIFFs are read in one piece.
+	 */
+	static native void setTiffSlabBytes(long bytes);
+
 	// --- Zarr ---
 	// A read takes the window [start, end), one value per axis of the array,
 	// and axes = {x, y, z, c, t}: the axes that are the image's columns, rows,

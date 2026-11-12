@@ -9,16 +9,37 @@
 // [zStart, zEnd): one per slice, or for images with several samples per pixel
 // one per sample, a slice's samples one after another (as ImageJ orders
 // channels). 8-bit color is instead packed into ImageJ RGB pixels by RGB8.
+//
+// ImageJ stacks (TiffInfo.imageJ: one directory followed by every slice,
+// uncompressed, which is how ImageJ saves stacks over 4 GB) are read here, not
+// by cpp-tiff, whose reader for them is one stream on one thread: every thread
+// reads its own stretch of the slices through its own handle (raw_file.h),
+// straight into Java's planes when they take the samples as stored
+// (readIntoPlanes), otherwise through one reused buffer of whole slices that
+// the conversions below empty into the planes. A file whose first directory
+// this code cannot follow is read by cpp-tiff as before.
+//
+// With the environment variable PFV_TIMING set, every read prints one line
+// on stderr with the seconds of its parts.
 
 #include <jni.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <new>
+#include <string>
 #include <vector>
 
 #include "parallelreadtiff.h"
 #include "helperfunctions.h" // cpp-tiff's
 
 #include "jni_marshal.h"
+#include "raw_file.h"
 #include "edu_abc_berkeley_ParallelReadNative.h"
 
 namespace {
@@ -26,6 +47,22 @@ namespace {
 // TiffInfo's fields in the order of Java's long[] (ParallelReadNative.TIFF_*)
 enum { I_WIDTH, I_HEIGHT, I_SLICES, I_DIRECTORIES, I_BITS, I_SAMPLES, I_SAMPLE_FORMAT, I_STRIP_SIZE,
 	I_COMPRESSION, I_PLANAR, I_TILED, I_IMAGEJ, I_IMAGEJ_IMAGES, I_COUNT };
+
+const char* const readFailed = "Parallel TIFF read failed (is the file damaged?)";
+
+// The most bytes of slices a read of an ImageJ stack converts through one
+// native buffer, at least one slice (setTiffSlabBytes makes it small for tests)
+const uint64_t defaultSlabBytes = (uint64_t)1 << 30;
+uint64_t slabBytes = defaultSlabBytes;
+
+bool timing() {
+	static const bool on = getenv("PFV_TIMING") != nullptr;
+	return on;
+}
+
+double now() {
+	return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 bool infoFromJava(JNIEnv* env, jlongArray a, TiffInfo& info) {
 	if (a == nullptr || env->GetArrayLength(a) != I_COUNT) {
@@ -59,52 +96,416 @@ uint64_t threadsFor(const TiffInfo& info, jlong zStart, jlong zEnd) {
 	return (bytes + (1u << 20) - 1) >> 20;
 }
 
-// Reads the slices [zStart, zEnd) as stored, (z, y, x[, sample]) row-major,
-// after checking that their samples are elemBytes wide. On failure a Java
-// exception is pending and nullptr is returned.
-void* readSlices(JNIEnv* env, jstring fileName, const TiffInfo& info, jlong zStart, jlong zEnd, uint64_t elemBytes)
-{
-	if (zStart < 0 || zEnd <= zStart || (uint64_t)zEnd > info.z) {
+// A read: the file, its description, and its slices [zStart, zStart + slices)
+struct Request {
+	std::string path;
+	TiffInfo info;
+	uint64_t zStart = 0, slices = 0;
+
+	uint64_t sliceBytes() const { return info.x * info.y * info.samples * (info.bits / 8); }
+	// Java planes: one per slice, or per sample of each slice
+	uint64_t planes() const { return slices * info.samples; }
+};
+
+// The read of slices [zStart, zEnd), checked to lie in the file and to have
+// samples elemBytes wide. On failure a Java exception is pending.
+bool request(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd, uint64_t elemBytes, Request& r) {
+	if (!infoFromJava(env, jInfo, r.info)) return false;
+	if (zStart < 0 || zEnd <= zStart || (uint64_t)zEnd > r.info.z) {
 		pfv::throwRuntime(env, "The slices to read lie outside the TIFF");
-		return nullptr;
+		return false;
 	}
-	if (info.bits != elemBytes * 8) {
+	if (r.info.bits != elemBytes * 8) {
 		pfv::throwRuntime(env, "The TIFF's data type does not match the read");
-		return nullptr;
+		return false;
 	}
 	const char* fName = env->GetStringUTFChars(fileName, nullptr);
-	if (fName == nullptr) return nullptr;
-	void* raw = readTiffParallelInfo(fName, info, nullptr, 0, { (uint64_t)zStart, (uint64_t)zEnd });
+	if (fName == nullptr) return false;
+	r.path = fName;
 	env->ReleaseStringUTFChars(fileName, fName);
-	if (raw == nullptr) pfv::throwRuntime(env, "Parallel TIFF read failed (is the file damaged?)");
-	return raw;
+	r.zStart = (uint64_t)zStart;
+	r.slices = (uint64_t)(zEnd - zStart);
+	return true;
 }
 
-// Hands slices read as stored ((z, y, x[, sample]) row-major) to Java as D,
-// one plane per slice, or one per sample of each slice (plane s + samples*z),
-// each element converted by conv on its way; frees raw. The samples are split
-// straight into Java's arrays, with no intermediate copy of the image.
-template <typename S, typename D, typename Conv>
-jobjectArray toJava(JNIEnv* env, const TiffInfo& info, void* raw, uint64_t slices, jobjectArray dest, Conv conv) {
-	const uint64_t samples = info.samples, n = info.x * info.y;
-	std::vector<uint64_t> base(slices * samples);
-	for (uint64_t p = 0; p < base.size(); p++) base[p] = (p / samples) * n * samples + p % samples;
-	const pfv::PlaneLayout layout = { info.x, info.y, samples, info.x * samples, base.data() };
-	const S* src = (const S*)raw;
-	jobjectArray out = pfv::slicesToJavaWith<D>(env, n, base.size(), dest,
-		[&](D* const* dst, uint64_t first, uint64_t count) { pfv::fillPlanes<S, D>(dst, first, count, src, layout, conv); });
-	free(raw);
+// dest if it holds the read's planes (planes of the image's x*y pixels), or
+// new planes if it is null; on failure null with a Java exception pending
+template <typename D>
+jobjectArray planesFor(JNIEnv* env, const Request& r, uint64_t planes, jobjectArray dest) {
+	if (dest == nullptr) // allocated (and left zero) a batch at a time
+		return pfv::slicesToJavaWith<D>(env, r.info.x * r.info.y, planes, nullptr, [](D* const*, uint64_t, uint64_t) {});
+	if ((uint64_t)env->GetArrayLength(dest) == planes) return dest;
+	pfv::throwRuntime(env, "Destination planes do not match the image slice count");
+	return nullptr;
+}
+
+// ---- ImageJ stacks ----
+
+// Where an ImageJ stack's slices lie: one after another from the first
+// strip's offset, in the file's byte order
+struct ImageJStack {
+	bool found = false;
+	uint64_t offset = 0;
+	bool swap = false; // the file's byte order is not this machine's
+	int64_t fileBytes = -1;
+};
+
+uint64_t fromBytes(const uint8_t* p, unsigned n, bool bigEndian) {
+	uint64_t v = 0;
+	for (unsigned i = 0; i < n; i++) v = bigEndian ? (v << 8) | p[i] : v | (uint64_t)p[i] << (8 * i);
+	return v;
+}
+
+bool hostBigEndian() {
+	const uint16_t one = 1;
+	uint8_t first;
+	memcpy(&first, &one, 1);
+	return first == 0;
+}
+
+// The first strip's offset and the byte order, from the first directory of a
+// classic TIFF or a BigTIFF (StripOffsets as SHORT, LONG or LONG8, inline or
+// at an offset). False if the directory is not as expected.
+bool readFirstDirectory(pfv::RawFile& f, ImageJStack& s) {
+	uint8_t h[16];
+	if (!f.readAt(h, 8, 0) || h[0] != h[1] || (h[0] != 'I' && h[0] != 'M')) return false;
+	const bool be = h[0] == 'M';
+	const uint64_t version = fromBytes(h + 2, 2, be);
+	const bool big = version == 43;
+	uint64_t ifd;
+	if (version == 42) ifd = fromBytes(h + 4, 4, be);
+	else if (big && fromBytes(h + 4, 2, be) == 8 && f.readAt(h + 8, 8, 8)) ifd = fromBytes(h + 8, 8, be);
+	else return false;
+	// A directory: the number of entries, then each entry's tag, type, count
+	// and value, or the value's offset when it does not fit
+	const unsigned countBytes = big ? 8 : 2, entryBytes = big ? 20 : 12, valueBytes = big ? 8 : 4;
+	uint8_t c[8];
+	if (!f.readAt(c, countBytes, ifd)) return false;
+	const uint64_t entries = fromBytes(c, countBytes, be);
+	if (entries == 0 || entries > 65535) return false;
+	std::vector<uint8_t> e((size_t)(entries * entryBytes));
+	if (!f.readAt(e.data(), e.size(), ifd + countBytes)) return false;
+	for (uint64_t i = 0; i < entries; i++) {
+		const uint8_t* q = e.data() + i * entryBytes;
+		if (fromBytes(q, 2, be) != 273) continue; // StripOffsets
+		const uint64_t type = fromBytes(q + 2, 2, be), count = fromBytes(q + 4, valueBytes, be);
+		const unsigned size = type == 3 ? 2 : type == 4 ? 4 : type == 16 ? 8 : 0;
+		if (size == 0 || count == 0) return false;
+		const uint8_t* value = q + 4 + valueBytes;
+		uint8_t first[8];
+		if (count > valueBytes / size) {
+			if (!f.readAt(first, size, fromBytes(value, valueBytes, be))) return false;
+			value = first;
+		}
+		s.offset = fromBytes(value, size, be);
+		s.swap = be != hostBigEndian();
+		return true;
+	}
+	return false;
+}
+
+// The layout of r's file if it is an ImageJ stack this code can read; found
+// is false for every other file, which cpp-tiff reads.
+ImageJStack imageJStack(const Request& r) {
+	ImageJStack s;
+	if (!r.info.imageJ) return s;
+	pfv::RawFile f(r.path.c_str());
+	if (f.isOpen() && readFirstDirectory(f, s)) {
+		s.found = true;
+		s.fileBytes = f.size();
+	}
+	return s;
+}
+
+// Whether the file holds every byte of the read: a file cut short fails
+// before anything is read (a read that comes up short fails as well)
+bool holdsRead(JNIEnv* env, const Request& r, const ImageJStack& s) {
+	if (s.fileBytes < 0 || s.offset + (r.zStart + r.slices) * r.sliceBytes() <= (uint64_t)s.fileBytes) return true;
+	pfv::throwRuntime(env, readFailed);
+	return false;
+}
+
+// The handles of a read, one per thread of its parallel regions, each opened
+// by its thread when first used and closed at the end of the read
+class Handles {
+	const std::string& path;
+	std::vector<std::unique_ptr<pfv::RawFile>> files;
+public:
+	explicit Handles(const std::string& path) : path(path), files((size_t)omp_get_max_threads()) {}
+
+	// The calling thread's handle, or null if it cannot be opened
+	pfv::RawFile* mine() {
+		std::unique_ptr<pfv::RawFile>& f = files[(size_t)omp_get_thread_num()];
+		if (!f) f.reset(new (std::nothrow) pfv::RawFile(path.c_str()));
+		return f && f->isOpen() ? f.get() : nullptr;
+	}
+};
+
+// Reverses the bytes of each sample (elemBytes wide) of bytes bytes at p
+void swapSamples(void* p, uint64_t bytes, unsigned elemBytes) {
+	if (elemBytes == 2) {
+		uint16_t* s = (uint16_t*)p;
+		for (uint64_t i = 0, n = bytes / 2; i < n; i++) s[i] = __builtin_bswap16(s[i]);
+	}
+	else if (elemBytes == 4) {
+		uint32_t* s = (uint32_t*)p;
+		for (uint64_t i = 0, n = bytes / 4; i < n; i++) s[i] = __builtin_bswap32(s[i]);
+	}
+	else if (elemBytes == 8) {
+		uint64_t* s = (uint64_t*)p;
+		for (uint64_t i = 0, n = bytes / 8; i < n; i++) s[i] = __builtin_bswap64(s[i]);
+	}
+}
+
+// Pieces of the file a thread reads at a time: small enough that its bytes
+// are swapped while they are still in the cache (4 MiB pieces made the read
+// of the 40 GB stack 10-25% slower)
+const uint64_t pieceBytes = (uint64_t)1 << 20;
+
+// Reads the bytes bytes of the file at at into buf with every thread, each
+// through its own handle a contiguous run of pieces in file order (a
+// sequential stream, which the kernel reads ahead), the bytes of each piece
+// swapped (samples elemBytes wide) right after it is read. False if a read
+// fails or the file ends first.
+bool readRange(Handles& files, uint64_t at, void* buf, uint64_t bytes, unsigned elemBytes, bool swap) {
+	const int64_t pieces = (int64_t)((bytes + pieceBytes - 1) / pieceBytes);
+	std::atomic<bool> failed(false);
+	#pragma omp parallel for schedule(static)
+	for (int64_t k = 0; k < pieces; k++) {
+		if (failed.load(std::memory_order_relaxed)) continue;
+		const uint64_t a = (uint64_t)k * pieceBytes, n = a + pieceBytes < bytes ? pieceBytes : bytes - a;
+		char* d = (char*)buf + a;
+		pfv::RawFile* f = files.mine();
+		if (f == nullptr || !f->readAt(d, n, at + a)) failed = true;
+		else if (swap) swapSamples(d, n, elemBytes);
+	}
+	return !failed;
+}
+
+// A read straight into Java's planes pins them a batch at a time, and keeps
+// the JVM's collector out until the batch is done. So batches are sized to
+// take about batchSeconds at the rate of the batch before (the first is
+// small, and none more than 8 times the one before): other threads that need
+// a collection meanwhile wait no longer than that, even on slow storage,
+// while a fast read is not cut into many batches, each of which waits for its
+// slowest thread (at 256 MB a batch, the 40 GB stack read from the page cache
+// took 1.0-2.3 s on Java 8 instead of 0.8-0.9 s in one batch).
+const double batchSeconds = 0.1;
+const uint64_t firstBatchBytes = (uint64_t)64 << 20;
+// Lanes start on multiples of this, and a lane's batch reads a multiple of it
+// unless it ends at a plane's end or the lane's (every piece holds whole
+// samples)
+const uint64_t laneAlign = 4096;
+
+// Slices of r's ImageJ stack into Java's planes as they are stored (T as on
+// disk, one sample per pixel): read straight into the pinned planes. The
+// read's bytes are cut into lanes, one per thread, and every batch continues
+// each lane where the batch before stopped, so that each thread's handle
+// reads one sequential stream from the start of the read to its end, which
+// the kernel reads ahead. (With each batch cut afresh into runs, every thread
+// moved on to a new place in the file at each batch and its read-ahead started
+// over: the 40 GB stack read cold in 16-18 s instead of 10-12 s, the storage's
+// own rate on that day.)
+template <typename T>
+jobjectArray readIntoPlanes(JNIEnv* env, const Request& r, const ImageJStack& s, jobjectArray dest) {
+	if (!holdsRead(env, r, s)) return nullptr;
+	jobjectArray out = planesFor<T>(env, r, r.slices, dest);
+	if (out == nullptr) return nullptr;
+	const double t0 = now();
+	const uint64_t n = r.info.x * r.info.y, planeBytes = n * sizeof(T), bytes = r.slices * planeBytes;
+	const uint64_t at = s.offset + r.zStart * planeBytes; // where the read starts in the file
+	// Lane l is the read's bytes [cur[l], end[l]); a batch reads [cur[l], stop[l])
+	const uint64_t lanes = (uint64_t)omp_get_max_threads();
+	std::vector<uint64_t> cur(lanes), stop(lanes), end(lanes), first(lanes);
+	for (uint64_t l = 0; l < lanes; l++) cur[l] = bytes / lanes * l / laneAlign * laneAlign;
+	for (uint64_t l = 0; l < lanes; l++) end[l] = l + 1 < lanes ? cur[l + 1] : bytes;
+	// The most planes a lane's batch touches, so that a batch pins no more
+	// than maxBatchPlanes
+	const uint64_t lanePlanes = pfv::maxBatchPlanes / lanes > 1 ? pfv::maxBatchPlanes / lanes : 1;
+	uint64_t perLane = firstBatchBytes / lanes; // the next batch's bytes of each lane
+	Handles files(r.path);
+	std::atomic<bool> failed(false);
+	std::vector<uint64_t> idx; // the batch's planes, in file order
+	uint64_t batches = 0, largest = 0;
+	for (;;) {
+		perLane = perLane < laneAlign ? laneAlign : perLane / laneAlign * laneAlign;
+		idx.clear();
+		uint64_t batchBytes = 0;
+		for (uint64_t l = 0; l < lanes; l++) {
+			const uint64_t planeCap = (cur[l] / planeBytes + lanePlanes) * planeBytes;
+			stop[l] = cur[l] + perLane < end[l] ? cur[l] + perLane : end[l];
+			if (stop[l] > planeCap) stop[l] = planeCap;
+			if (stop[l] <= cur[l]) continue;
+			batchBytes += stop[l] - cur[l];
+			for (uint64_t p = cur[l] / planeBytes; p <= (stop[l] - 1) / planeBytes; p++)
+				if (idx.empty() || idx.back() != p) idx.push_back(p);
+		}
+		if (idx.empty()) break;
+		for (uint64_t l = 0; l < lanes; l++)
+			if (stop[l] > cur[l]) first[l] = (uint64_t)(std::lower_bound(idx.begin(), idx.end(), cur[l] / planeBytes) - idx.begin());
+		double t = 0;
+		const bool pinned = pfv::fillJavaPlanes<T>(env, out, n, idx.data(), idx.size(), [&](T* const* dst, uint64_t, uint64_t) {
+			const double a = now();
+			// Thread l reads lane l in every batch (and so through the same handle)
+			#pragma omp parallel for schedule(static, 1)
+			for (int64_t l = 0; l < (int64_t)lanes; l++) {
+				uint64_t k = first[l];
+				for (uint64_t pos = cur[l]; pos < stop[l] && !failed.load(std::memory_order_relaxed);) {
+					const uint64_t in = pos % planeBytes;
+					while (idx[k] < pos / planeBytes) k++;
+					uint64_t m = planeBytes - in < pieceBytes ? planeBytes - in : pieceBytes;
+					if (m > stop[l] - pos) m = stop[l] - pos;
+					char* d = (char*)dst[k] + in;
+					pfv::RawFile* f = files.mine();
+					if (f == nullptr || !f->readAt(d, m, at + pos)) failed = true;
+					else if (s.swap) swapSamples(d, m, sizeof(T));
+					pos += m;
+				}
+			}
+			t = now() - a;
+		}, [&](uint64_t) { return (uint64_t)idx.size(); });
+		if (!pinned) return nullptr;
+		if (failed) break;
+		cur = stop;
+		batches++;
+		if (batchBytes > largest) largest = batchBytes;
+		const double next = t > 0 ? batchBytes / lanes * batchSeconds / t : 8.0 * perLane;
+		perLane = next < 8.0 * perLane ? (uint64_t)next : 8 * perLane;
+	}
+	if (timing())
+		fprintf(stderr, "    [native tiff] ImageJ stack read into Java planes %.3f s (%.2f GB, %llu batches of up to %.2f GB, threads %d)\n",
+			now() - t0, bytes / 1e9, (unsigned long long)batches, largest / 1e9, omp_get_max_threads());
+	if (failed) {
+		pfv::throwRuntime(env, readFailed);
+		return nullptr;
+	}
 	return out;
+}
+
+// Slices of r's ImageJ stack read a slab at a time through one reused buffer
+// of whole slices (at most slabBytes, at least one slice); after each slab,
+// deliver(buf, s0, s1) moves the read's slices [s0, s1) from buf into Java's
+// planes. False, with a Java exception pending, if a read or a delivery fails.
+template <typename Deliver>
+bool readImageJSlabs(JNIEnv* env, const Request& r, const ImageJStack& s, Deliver deliver) {
+	if (!holdsRead(env, r, s)) return false;
+	const uint64_t sliceBytes = r.sliceBytes();
+	uint64_t per = slabBytes / sliceBytes;
+	if (per < 1) per = 1;
+	if (per > r.slices) per = r.slices;
+	void* buf = malloc((size_t)(per * sliceBytes));
+	if (buf == nullptr) {
+		pfv::throwRuntime(env, "Not enough native memory to read the TIFF");
+		return false;
+	}
+	Handles files(r.path);
+	bool ok = true;
+	double tRead = 0, tDeliver = 0;
+	for (uint64_t s0 = 0; s0 < r.slices && ok; s0 += per) {
+		const uint64_t s1 = s0 + per < r.slices ? s0 + per : r.slices;
+		const double a = now();
+		ok = readRange(files, s.offset + (r.zStart + s0) * sliceBytes, buf, (s1 - s0) * sliceBytes, (unsigned)(r.info.bits / 8), s.swap);
+		const double b = now();
+		if (!ok) pfv::throwRuntime(env, readFailed);
+		else ok = deliver(buf, s0, s1);
+		tRead += b - a;
+		tDeliver += now() - b;
+	}
+	const double t1 = now();
+	free(buf);
+	if (timing())
+		fprintf(stderr, "    [native tiff] ImageJ stack read through a %.2f GB buffer: reads %.3f s, into Java planes %.3f s, free %.3f s (%.2f GB, threads %d)\n",
+			per * sliceBytes / 1e9, tRead, tDeliver, now() - t1, r.slices * sliceBytes / 1e9, omp_get_max_threads());
+	return ok;
+}
+
+// ---- Every read ----
+
+// Moves the read's slices [s0, s1), stored in buf as in the file ((z, y, x[,
+// sample]) row-major), into their Java planes of dest as D, one plane per
+// slice, or one per sample of each slice (plane s + samples*z), each element
+// converted by conv on its way. The samples are split straight into Java's
+// arrays, with no intermediate copy. False with a Java exception pending if
+// a plane is missing or the wrong size.
+template <typename S, typename D, typename Conv>
+bool slabToJava(JNIEnv* env, const TiffInfo& info, const void* buf, uint64_t s0, uint64_t s1, jobjectArray dest, Conv conv) {
+	const uint64_t samples = info.samples, n = info.x * info.y, planes = (s1 - s0) * samples;
+	std::vector<uint64_t> idx(planes), base(planes);
+	for (uint64_t p = 0; p < planes; p++) {
+		idx[p] = s0 * samples + p;
+		base[p] = (p / samples) * n * samples + p % samples;
+	}
+	const pfv::PlaneLayout layout = { info.x, info.y, samples, info.x * samples, base.data() };
+	const S* src = (const S*)buf;
+	return pfv::fillJavaPlanes<D>(env, dest, n, idx.data(), planes,
+		[&](D* const* dst, uint64_t k0, uint64_t count) { pfv::fillPlanes<S, D>(dst, k0, count, src, layout, conv); });
+}
+
+// The same for 8-bit color: the read's slices [s0, s1) packed into ImageJ RGB
+// pixels (0xff000000 | r<<16 | g<<8 | b; alpha, if present, dropped), one
+// plane per slice, straight into Java's arrays
+bool rgbSlabToJava(JNIEnv* env, const TiffInfo& info, const void* buf, uint64_t s0, uint64_t s1, jobjectArray dest) {
+	const uint64_t slices = s1 - s0, n = info.x * info.y, samples = info.samples;
+	std::vector<uint64_t> idx(slices);
+	for (uint64_t k = 0; k < slices; k++) idx[k] = s0 + k;
+	const uint8_t* src = (const uint8_t*)buf;
+	return pfv::fillJavaPlanes<int32_t>(env, dest, n, idx.data(), slices, [&](int32_t* const* dst, uint64_t first, uint64_t count) {
+		const uint64_t block = 1u << 16, per = (n + block - 1) / block;
+		const int64_t total = (int64_t)(count * per);
+		#pragma omp parallel for schedule(static) if(count * n * 4 > (1u << 20))
+		for (int64_t k = 0; k < total; k++) {
+			const uint64_t p = (uint64_t)k / per, i0 = ((uint64_t)k % per) * block, i1 = i0 + block < n ? i0 + block : n;
+			const uint8_t* s = src + (first + p) * n * samples;
+			int32_t* d = dst[p];
+			for (uint64_t i = i0; i < i1; i++) {
+				const uint8_t* q = s + i * samples;
+				d[i] = (int32_t)(0xFF000000u | ((uint32_t)q[0] << 16) | ((uint32_t)q[1] << 8) | (uint32_t)q[2]);
+			}
+		}
+	});
+}
+
+// Reads r's slices as stored and hands them to deliver(buf, s0, s1) (see
+// readImageJSlabs): an ImageJ stack a slab at a time, any other file in one
+// piece through cpp-tiff. False with a Java exception pending on failure.
+template <typename Deliver>
+bool readSlabs(JNIEnv* env, const Request& r, const ImageJStack& s, Deliver deliver) {
+	if (s.found) return readImageJSlabs(env, r, s, deliver);
+	const double t0 = now();
+	void* raw = readTiffParallelInfo(r.path.c_str(), r.info, nullptr, 0, { r.zStart, r.zStart + r.slices });
+	if (raw == nullptr) {
+		pfv::throwRuntime(env, readFailed);
+		return false;
+	}
+	const double t1 = now();
+	const bool ok = deliver(raw, 0, r.slices);
+	const double t2 = now();
+	free(raw);
+	if (timing())
+		fprintf(stderr, "    [native tiff] cpp-tiff read into a new buffer %.3f s, into Java planes %.3f s, free %.3f s (%.2f GB, threads %d)\n",
+			t1 - t0, t2 - t1, now() - t2, r.slices * r.sliceBytes() / 1e9, omp_get_max_threads());
+	return ok;
+}
+
+// r's slices into Java planes of D, each sample converted by conv
+template <typename S, typename D, typename Conv>
+jobjectArray readConverted(JNIEnv* env, const Request& r, const ImageJStack& s, jobjectArray dest, Conv conv) {
+	jobjectArray out = planesFor<D>(env, r, r.planes(), dest);
+	if (out == nullptr) return nullptr;
+	const bool ok = readSlabs(env, r, s, [&](const void* buf, uint64_t s0, uint64_t s1) {
+		return slabToJava<S, D>(env, r.info, buf, s0, s1, out, conv);
+	});
+	return ok ? out : nullptr;
 }
 
 template <typename T>
 jobjectArray readTiff(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd, jobjectArray dest) {
-	TiffInfo info;
-	if (!infoFromJava(env, jInfo, info)) return nullptr;
-	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
-	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(T));
-	if (raw == nullptr) return nullptr;
-	return toJava<T, T>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::Cast<T, T>());
+	Request r;
+	if (!request(env, fileName, jInfo, zStart, zEnd, sizeof(T), r)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(r.info, zStart, zEnd));
+	const ImageJStack s = imageJStack(r);
+	if (s.found && r.info.samples == 1) return readIntoPlanes<T>(env, r, s, dest);
+	return readConverted<T, T>(env, r, s, dest, pfv::Cast<T, T>());
 }
 
 // Signed integers: XOR-shift the sign bit into the unsigned range ImageJ
@@ -113,24 +514,20 @@ template <typename UnsignedT, typename JavaT>
 jobjectArray readTiffShifted(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd,
 	UnsignedT mask, jobjectArray dest)
 {
-	TiffInfo info;
-	if (!infoFromJava(env, jInfo, info)) return nullptr;
-	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
-	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(UnsignedT));
-	if (raw == nullptr) return nullptr;
-	return toJava<UnsignedT, JavaT>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::XorSign<UnsignedT, JavaT>{ mask });
+	Request r;
+	if (!request(env, fileName, jInfo, zStart, zEnd, sizeof(UnsignedT), r)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(r.info, zStart, zEnd));
+	return readConverted<UnsignedT, JavaT>(env, r, imageJStack(r), dest, pfv::XorSign<UnsignedT, JavaT>{ mask });
 }
 
 // 32- and 64-bit integers and doubles are converted to float: ImageJ shows
 // no other numeric types.
 template <typename NativeT>
 jobjectArray readTiffAsFloat(JNIEnv* env, jstring fileName, jlongArray jInfo, jlong zStart, jlong zEnd, jobjectArray dest) {
-	TiffInfo info;
-	if (!infoFromJava(env, jInfo, info)) return nullptr;
-	const pfv::ThreadCap cap(threadsFor(info, zStart, zEnd));
-	void* raw = readSlices(env, fileName, info, zStart, zEnd, sizeof(NativeT));
-	if (raw == nullptr) return nullptr;
-	return toJava<NativeT, float>(env, info, raw, (uint64_t)(zEnd - zStart), dest, pfv::Cast<NativeT, float>());
+	Request r;
+	if (!request(env, fileName, jInfo, zStart, zEnd, sizeof(NativeT), r)) return nullptr;
+	const pfv::ThreadCap cap(threadsFor(r.info, zStart, zEnd));
+	return readConverted<NativeT, float>(env, r, imageJStack(r), dest, pfv::Cast<NativeT, float>());
 }
 
 } // namespace
@@ -195,36 +592,28 @@ JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallel
 // pixels: one plane per slice.
 JNIEXPORT jobjectArray JNICALL Java_edu_abc_berkeley_ParallelReadNative_parallelReadTiffRGB8 PFV_TIFF_READ_ARGS
 {
-	TiffInfo tinfo;
-	if (!infoFromJava(env, info, tinfo)) return nullptr;
-	const pfv::ThreadCap cap(threadsFor(tinfo, zStart, zEnd));
-	uint8_t* raw = (uint8_t*)readSlices(env, fileName, tinfo, zStart, zEnd, 1);
-	if (raw == nullptr) return nullptr;
-	if (tinfo.samples < 3) {
-		free(raw);
+	Request r;
+	if (!request(env, fileName, info, zStart, zEnd, 1, r)) return nullptr;
+	if (r.info.samples < 3) {
 		pfv::throwRuntime(env, "The TIFF is not an RGB image");
 		return nullptr;
 	}
-	// Packed into ImageJ RGB pixels (0xff000000 | r<<16 | g<<8 | b; alpha, if
-	// present, dropped) straight into Java's arrays
-	const uint64_t slices = (uint64_t)(zEnd - zStart), n = tinfo.x * tinfo.y, samples = tinfo.samples;
-	const uint8_t* src = raw;
-	jobjectArray out = pfv::slicesToJavaWith<int32_t>(env, n, slices, dest, [&](int32_t* const* dst, uint64_t first, uint64_t count) {
-		const uint64_t block = 1u << 16, per = (n + block - 1) / block;
-		const int64_t total = (int64_t)(count * per);
-		#pragma omp parallel for schedule(static) if(count * n * 4 > (1u << 20))
-		for (int64_t k = 0; k < total; k++) {
-			const uint64_t p = (uint64_t)k / per, i0 = ((uint64_t)k % per) * block, i1 = i0 + block < n ? i0 + block : n;
-			const uint8_t* s = src + (first + p) * n * samples;
-			int32_t* d = dst[p];
-			for (uint64_t i = i0; i < i1; i++) {
-				const uint8_t* q = s + i * samples;
-				d[i] = (int32_t)(0xFF000000u | ((uint32_t)q[0] << 16) | ((uint32_t)q[1] << 8) | (uint32_t)q[2]);
-			}
-		}
+	const pfv::ThreadCap cap(threadsFor(r.info, zStart, zEnd));
+	jobjectArray out = planesFor<int32_t>(env, r, r.slices, dest);
+	if (out == nullptr) return nullptr;
+	const bool ok = readSlabs(env, r, imageJStack(r), [&](const void* buf, uint64_t s0, uint64_t s1) {
+		return rgbSlabToJava(env, r.info, buf, s0, s1, out);
 	});
-	free(raw);
-	return out;
+	return ok ? out : nullptr;
+}
+
+// For tests: the most bytes of slices a read of an ImageJ stack converts
+// through its native buffer at once (at least one slice; 0 or less: the
+// default, 1 GiB).
+JNIEXPORT void JNICALL Java_edu_abc_berkeley_ParallelReadNative_setTiffSlabBytes
+	(JNIEnv*, jclass, jlong bytes)
+{
+	slabBytes = bytes > 0 ? (uint64_t)bytes : defaultSlabBytes;
 }
 
 // The most threads the native reads of the calling thread use from now on
